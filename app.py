@@ -22,7 +22,11 @@ def call_model(model_key, prompt, system=""):
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
-    payload = {"model": MODELS[model_key], "messages": messages}
+    payload = {
+        "model": MODELS[model_key],
+        "messages": messages,
+        "max_tokens": 800
+    }
     r = requests.post(GROQ_URL, headers=headers, json=payload)
     if r.status_code != 200:
         return f"[Error {r.status_code}] {r.text}"
