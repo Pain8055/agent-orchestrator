@@ -23,11 +23,11 @@ AGENTS = {
         "system": "You are the lead orchestrator of an AI agent team. You plan, delegate, and give clear final answers."
     },
     "code": {
-        "model": "qwen/qwen3.6-27b",
+        "model": "openai/gpt-oss-120b",
         "system": "You are a senior software engineer. Write correct, clean, working code. Briefly explain key decisions. No fluff."
     },
     "debug": {
-        "model": "qwen/qwen3.6-27b",
+        "model": "openai/gpt-oss-120b",
         "system": "You are a debugging specialist. Given broken code or an error, find the root cause precisely and give the exact fix. Explain WHY it broke."
     },
     "reasoning": {
@@ -48,8 +48,13 @@ AGENTS = {
     },
 }
 
-def call_agent(role, prompt, max_tokens=800):
+def strip_thinking(text):
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+def call_agent(role, prompt, max_tokens=None):
     agent = AGENTS[role]
+    if max_tokens is None:
+        max_tokens = 800
     headers = {"Authorization": f"Bearer {GROQ_KEY}"}
     payload = {
         "model": agent["model"],
@@ -62,7 +67,8 @@ def call_agent(role, prompt, max_tokens=800):
     r = requests.post(GROQ_URL, headers=headers, json=payload)
     if r.status_code != 200:
         return f"[Error {r.status_code}] {r.text}"
-    return r.json()["choices"][0]["message"]["content"]
+    raw = r.json()["choices"][0]["message"]["content"]
+    return strip_thinking(raw)
 
 def web_search(query):
     payload = {"api_key": TAVILY_KEY, "query": query, "max_results": 5}
