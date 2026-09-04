@@ -1,11 +1,16 @@
 import streamlit as st
 import requests
+from supabase import create_client
 
 st.set_page_config(page_title="My Agent Team", page_icon="🤖")
 st.title("🤖 My Agent Team")
 
 GROQ_KEY = st.secrets["GROQ_API_KEY"]
 TAVILY_KEY = st.secrets["TAVILY_API_KEY"]
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 TAVILY_URL = "https://api.tavily.com/search"
@@ -67,8 +72,37 @@ def run_task(task):
         return call_model("design", clean_task, system="You are a UI/UX design assistant. Give concrete design decisions, not vague advice."), task_type
     return call_model("head", clean_task), task_type
 
+def save_message(user_id, role, content):
+    supabase.table("chat_history").insert({
+        "user_id": user_id,
+        "role": role,
+        "content": content
+    }).execute()
+
+def load_history(user_id):
+    res = supabase.table("chat_history").select("*").eq("user_id", user_id).order("created_at").execute()
+    return res.data
+
+# --- User ID entry ---
+if "user_id" not in st.session_state:
+    st.session_state.user_id = ""
+
+with st.sidebar:
+    st.subheader("Your ID")
+    uid_input = st.text_input("Enter your ID (same ID = same history, any device)", value=st.session_state.user_id)
+    if st.button("Load / Switch"):
+        st.session_state.user_id = uid_input.strip()
+        st.session_state.messages = load_history(st.session_state.user_id)
+        st.rerun()
+
+if not st.session_state.user_id:
+    st.info("👈 Enter an ID in the sidebar to start (e.g. 'anuj'). Use the same ID on any device to keep your history.")
+    st.stop()
+
+st.caption(f"Logged in as: **{st.session_state.user_id}**")
+
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = load_history(st.session_state.user_id)
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
@@ -76,6 +110,7 @@ for msg in st.session_state.messages:
 
 if prompt := st.chat_input("Type a task... (e.g. 'code: sort a list in python')"):
     st.session_state.messages.append({"role": "user", "content": prompt})
+    save_message(st.session_state.user_id, "user", prompt)
     with st.chat_message("user"):
         st.write(prompt)
 
@@ -86,3 +121,4 @@ if prompt := st.chat_input("Type a task... (e.g. 'code: sort a list in python')"
             st.write(result)
 
     st.session_state.messages.append({"role": "assistant", "content": result})
+    save_message(st.session_state.user_id, "assistant", result)
