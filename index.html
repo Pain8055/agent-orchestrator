@@ -27,13 +27,13 @@
     background: var(--bg);
     color: var(--text);
     font-family: var(--sans);
-    height: 100vh;
+    height: 100vh; height: 100dvh;
     overflow: hidden;
   }
 
   .app {
     display: flex;
-    height: 100vh;
+    height: 100vh; height: 100dvh;
   }
 
   /* ---------- Sidebar ---------- */
@@ -63,7 +63,7 @@
       position: fixed;
       top: 0;
       left: 0;
-      height: 100vh;
+      height: 100vh; height: 100dvh;
       z-index: 100;
       box-shadow: 4px 0 24px rgba(0,0,0,0.5);
     }
@@ -198,7 +198,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100vh; height: 100dvh;
   }
 
   .topbar {
@@ -465,8 +465,8 @@
 
 <script>
 // ---------------- CONFIG — fill these in ----------------
-const SUPABASE_URL = "https://qhxjsnmmhhichyxbvjro.supabase.co";       // e.g. https://xxxxx.supabase.co
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFoeGpzbm1taGhpY2h5eGJ2anJvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg1MjAxMzEsImV4cCI6MjEwNDA5NjEzMX0.SCgtGoNMqMffxRN_D2PstCTvFJkYAWlCSmBN82rniK4";  // anon public key
+const SUPABASE_URL = "YOUR_SUPABASE_URL_HERE";       // e.g. https://xxxxx.supabase.co
+const SUPABASE_KEY = "YOUR_SUPABASE_ANON_KEY_HERE";  // anon public key
 
 const GROQ_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/smooth-task";
 const TAVILY_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/Tavily-chat1";
@@ -555,8 +555,11 @@ function renderProcessList(activeAgent = null) {
 renderProcessList();
 
 // ---------------- API calls ----------------
-async function callAgent(role, prompt, maxTokens = 800) {
+async function callAgent(role, prompt, maxTokens = null) {
   const agent = AGENTS[role];
+  if (maxTokens === null) {
+    maxTokens = (role === "code" || role === "debug" || role === "reasoning") ? 3000 : 1200;
+  }
   const res = await fetch(GROQ_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -569,7 +572,21 @@ async function callAgent(role, prompt, maxTokens = 800) {
   });
   const data = await res.json();
   if (!res.ok) return `[Error] ${JSON.stringify(data)}`;
-  return (data.content || "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+  return cleanThinking(data.content || "");
+}
+
+function cleanThinking(text) {
+  // Case 1: complete <think>...</think> pair — remove it
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+  // Case 2: unclosed <think> tag (leaked/truncated reasoning) — strip from <think> onward
+  if (cleaned.includes("<think>") || text.trim().startsWith("<think>")) {
+    const idx = text.indexOf("<think>");
+    if (idx !== -1) {
+      const before = text.slice(0, idx).trim();
+      cleaned = before || "[Response was still reasoning when it ran out of room — try asking again, it usually completes fine on retry.]";
+    }
+  }
+  return cleaned;
 }
 
 async function webSearch(query) {
