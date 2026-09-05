@@ -45,7 +45,62 @@
     display: flex;
     flex-direction: column;
     padding: 20px 16px;
+    transition: all 0.25s ease;
+    overflow: hidden;
   }
+
+  .sidebar.collapsed {
+    width: 0;
+    min-width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    border-right: none;
+  }
+
+  @media (max-width: 768px) {
+    .app { position: relative; }
+    .sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 100vh;
+      z-index: 100;
+      box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+    }
+    .sidebar.collapsed {
+      transform: translateX(-100%);
+      width: 260px;
+      min-width: 260px;
+      padding: 20px 16px;
+      border-right: 1px solid var(--border);
+    }
+    .sidebar:not(.collapsed) { transform: translateX(0); }
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 99;
+    }
+    .overlay.show { display: block; }
+  }
+
+  .hamburger {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 34px;
+    height: 34px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .hamburger:hover { border-color: var(--accent); color: var(--accent); }
 
   .sidebar-title {
     font-family: var(--mono);
@@ -360,7 +415,8 @@
 <body>
 
 <div class="app">
-  <div class="sidebar">
+  <div class="overlay" id="overlay"></div>
+  <div class="sidebar" id="sidebar">
     <div class="sidebar-title">// agent_team.sys</div>
 
     <div class="user-box">
@@ -380,7 +436,10 @@
 
   <div class="main">
     <div class="topbar">
-      <span>SESSION</span>
+      <div style="display:flex; align-items:center; gap:12px;">
+        <button class="hamburger" id="hamburgerBtn">☰</button>
+        <span>SESSION</span>
+      </div>
       <strong id="sessionUser">not connected</strong>
     </div>
 
@@ -406,12 +465,32 @@
 
 <script>
 // ---------------- CONFIG — fill these in ----------------
-const SUPABASE_URL = "https://qhxjsnmmhhichyxbvjro.supabase.co";       // e.g. https://xxxxx.supabase.co
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFoeGpzbm1taGhpY2h5eGJ2anJvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg1MjAxMzEsImV4cCI6MjEwNDA5NjEzMX0.SCgtGoNMqMffxRN_D2PstCTvFJkYAWlCSmBN82rniK4";  // anon public key
+const SUPABASE_URL = "YOUR_SUPABASE_URL_HERE";       // e.g. https://xxxxx.supabase.co
+const SUPABASE_KEY = "YOUR_SUPABASE_ANON_KEY_HERE";  // anon public key
 
 const GROQ_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/smooth-task";
 const TAVILY_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/Tavily-chat1";
 // ----------------------------------------------------------
+
+// ---------------- Sidebar toggle ----------------
+const sidebar = document.getElementById("sidebar");
+const overlay = document.getElementById("overlay");
+
+function toggleSidebar() {
+  const isMobile = window.innerWidth <= 768;
+  sidebar.classList.toggle("collapsed");
+  if (isMobile) {
+    overlay.classList.toggle("show", !sidebar.classList.contains("collapsed"));
+  }
+}
+
+document.getElementById("hamburgerBtn").onclick = toggleSidebar;
+overlay.onclick = toggleSidebar;
+
+// Start collapsed on mobile by default
+if (window.innerWidth <= 768) {
+  sidebar.classList.add("collapsed");
+}
 
 // ---------------- Bind buttons FIRST, before anything risky ----------------
 document.getElementById("gateBtn").onclick = () => connect(document.getElementById("gateInput").value);
