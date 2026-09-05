@@ -232,7 +232,7 @@
   }
 
   .msg {
-    max-width: 720px;
+    max-width: min(720px, 92vw);
     min-width: 0;
   }
   .msg.user { align-self: flex-end; }
@@ -257,7 +257,7 @@
     font-size: 14px;
     line-height: 1.6;
     white-space: pre-wrap;
-    overflow-wrap: break-word;
+    overflow-wrap: anywhere;
     word-break: break-word;
     max-width: 100%;
     min-width: 0;
