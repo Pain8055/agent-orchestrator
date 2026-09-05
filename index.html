@@ -34,6 +34,7 @@
   .app {
     display: flex;
     height: 100vh; height: 100dvh;
+    min-height: 0;
   }
 
   /* ---------- Sidebar ---------- */
@@ -198,7 +199,8 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    height: 100vh; height: 100dvh;
+    min-height: 0;
+    height: 100%;
   }
 
   .topbar {
@@ -215,6 +217,7 @@
 
   .log {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 24px;
     display: flex;
@@ -452,7 +455,7 @@
       <button id="gateBtn">Connect</button>
     </div>
 
-    <div id="chatView" style="display:none; flex:1; flex-direction:column;">
+    <div id="chatView" style="display:none; flex:1; flex-direction:column; min-height:0;">
       <div class="log" id="log"></div>
       <div class="input-bar">
         <span class="prompt-symbol">&gt;</span>
@@ -465,8 +468,8 @@
 
 <script>
 // ---------------- CONFIG — fill these in ----------------
-const SUPABASE_URL = "https://qhxjsnmmhhichyxbvjro.supabase.co";       // e.g. https://xxxxx.supabase.co
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFoeGpzbm1taGhpY2h5eGJ2anJvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg1MjAxMzEsImV4cCI6MjEwNDA5NjEzMX0.SCgtGoNMqMffxRN_D2PstCTvFJkYAWlCSmBN82rniK4";  // anon public key
+const SUPABASE_URL = "YOUR_SUPABASE_URL_HERE";       // e.g. https://xxxxx.supabase.co
+const SUPABASE_KEY = "YOUR_SUPABASE_ANON_KEY_HERE";  // anon public key
 
 const GROQ_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/smooth-task";
 const TAVILY_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/Tavily-chat1";
