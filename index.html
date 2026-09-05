@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Team</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --bg: #0B0E14;
+    --panel: #12161F;
+    --border: #1F242E;
+    --text: #D8DEE9;
+    --text-dim: #6B7280;
+    --accent: #2DD4BF;
+    --accent-dim: #134E4A;
+    --error: #E5484D;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .app {
+    display: flex;
+    height: 100vh;
+  }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar {
+    width: 260px;
+    min-width: 260px;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 20px 16px;
+  }
+
+  .sidebar-title {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+
+  .user-box {
+    margin-bottom: 24px;
+  }
+
+  .user-box input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    margin-bottom: 8px;
+  }
+
+  .user-box button {
+    width: 100%;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+  }
+
+  .user-box button:hover { background: var(--accent); color: var(--bg); }
+
+  .logged-in-as {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 20px;
+    word-break: break-all;
+  }
+
+  .process-list { flex: 1; }
+
+  .process-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 7px 0;
+    color: var(--text-dim);
+    transition: color 0.2s;
+  }
+
+  .process-item.active { color: var(--accent); }
+
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    flex-shrink: 0;
+    transition: all 0.2s;
+  }
+
+  .dot.active {
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
+  }
+
+  .hint {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    line-height: 1.6;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+
+  .hint code {
+    color: var(--accent);
+    background: transparent;
+  }
+
+  /* ---------- Main ---------- */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  .topbar {
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-dim);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .topbar strong { color: var(--text); }
+
+  .log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .msg { max-width: 720px; }
+  .msg.user { align-self: flex-end; }
+  .msg.assistant { align-self: flex-start; }
+
+  .msg-tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+  }
+
+  .msg.user .msg-tag { color: var(--text-dim); text-align: right; }
+
+  .bubble {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+
+  .msg.user .bubble {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: #E8FFFB;
+  }
+
+  .bubble pre {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    margin: 8px 0;
+  }
+
+  .bubble code {
+    font-family: var(--mono);
+    background: var(--bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12.5px;
+  }
+
+  /* ---------- Pipeline trace (signature element) ---------- */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+
+  .pipeline-node {
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg);
+    transition: all 0.3s;
+  }
+
+  .pipeline-node.done {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .pipeline-node.running {
+    border-color: var(--accent);
+    color: var(--accent);
+    animation: pulse 1s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .pipeline-arrow { color: var(--border); }
+
+  .thinking {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .thinking::after {
+    content: '_';
+    animation: blink 1s infinite;
+  }
+
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ---------- Input ---------- */
+  .input-bar {
+    border-top: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .prompt-symbol {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 15px;
+  }
+
+  #taskInput {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 14px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    outline: none;
+  }
+
+  #taskInput:focus { border-color: var(--accent); }
+
+  #sendBtn {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 13px;
+    padding: 10px 18px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  #sendBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .gate {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .gate-box {
+    font-family: var(--mono);
+    color: var(--text-dim);
+    font-size: 13px;
+    text-align: center;
+    max-width: 320px;
+    line-height: 1.6;
+  }
+
+  .gate input {
+    width: 260px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    padding: 10px;
+    border-radius: 4px;
+    text-align: center;
+  }
+
+  .gate button {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    font-family: var(--mono);
+    font-weight: 600;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <div class="sidebar">
+    <div class="sidebar-title">// agent_team.sys</div>
+
+    <div class="user-box">
+      <input type="text" id="uidInput" placeholder="your-id">
+      <button id="loadBtn">Load / Switch</button>
+    </div>
+    <div class="logged-in-as" id="loggedInAs"></div>
+
+    <div class="process-list" id="processList"></div>
+
+    <div class="hint">
+      Force an agent: <code>code:</code> <code>debug:</code> <code>math:</code><br>
+      <code>writing:</code> <code>design:</code> <code>search:</code> <code>review:</code><br>
+      Force multi-step: <code>plan:</code>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <span>SESSION</span>
+      <strong id="sessionUser">not connected</strong>
+    </div>
+
+    <div id="gateView" class="gate">
+      <div class="gate-box">
+        ENTER AN ID TO START<br>
+        <span style="color:var(--text-dim); font-size:11px;">Same ID loads your history on any device.</span>
+      </div>
+      <input type="text" id="gateInput" placeholder="e.g. anuj">
+      <button id="gateBtn">Connect</button>
+    </div>
+
+    <div id="chatView" style="display:none; flex:1; flex-direction:column;">
+      <div class="log" id="log"></div>
+      <div class="input-bar">
+        <span class="prompt-symbol">&gt;</span>
+        <input type="text" id="taskInput" placeholder="Type a task...">
+        <button id="sendBtn">Run</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------------- CONFIG — fill these in ----------------
+const SUPABASE_URL = "YOUR_SUPABASE_URL_HERE";       // e.g. https://xxxxx.supabase.co
+const SUPABASE_KEY = "YOUR_SUPABASE_ANON_KEY_HERE";  // anon public key
+
+const GROQ_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/smooth-task";
+const TAVILY_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/Tavily-chat1";
+// ----------------------------------------------------------
+
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const AGENTS = {
+  head:      { model: "openai/gpt-oss-120b", system: "You are the lead orchestrator of an AI agent team. You plan, delegate, and give clear final answers." },
+  code:      { model: "openai/gpt-oss-120b", system: "You are a senior software engineer. Write correct, clean, working code. Briefly explain key decisions. No fluff." },
+  debug:     { model: "openai/gpt-oss-120b", system: "You are a debugging specialist. Given broken code or an error, find the root cause precisely and give the exact fix. Explain WHY it broke." },
+  reasoning: { model: "openai/gpt-oss-120b", system: "You are a reasoning and math specialist. Solve problems step by step, show your work, double-check your final answer." },
+  writing:   { model: "openai/gpt-oss-120b", system: "You are a professional writing assistant. Write clear, well-structured, natural text for the requested purpose." },
+  design:    { model: "openai/gpt-oss-120b", system: "You are a UI/UX design specialist. Give concrete, specific design decisions (colors, layout, spacing, typography) — never vague advice." },
+  review:    { model: "openai/gpt-oss-120b", system: "You are a strict quality reviewer. Given a task and a draft answer, find any mistakes, gaps, or weaknesses. If it's good, say so briefly. If not, give the corrected version." },
+};
+
+const AGENT_LABELS = ["head","code","debug","reasoning","writing","design","search","review"];
+
+let userId = "";
+let messages = [];
+
+// ---------------- Sidebar process list ----------------
+function renderProcessList(activeAgent = null) {
+  const list = document.getElementById("processList");
+  list.innerHTML = "";
+  AGENT_LABELS.forEach(name => {
+    const item = document.createElement("div");
+    item.className = "process-item" + (name === activeAgent ? " active" : "");
+    item.innerHTML = `<span class="dot${name === activeAgent ? ' active' : ''}"></span>${name}`;
+    list.appendChild(item);
+  });
+}
+renderProcessList();
+
+// ---------------- API calls ----------------
+async function callAgent(role, prompt, maxTokens = 800) {
+  const agent = AGENTS[role];
+  const res = await fetch(GROQ_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: agent.model,
+      system: agent.system,
+      prompt: prompt,
+      max_tokens: maxTokens
+    })
+  });
+  const data = await res.json();
+  if (!res.ok) return `[Error] ${JSON.stringify(data)}`;
+  return (data.content || "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+}
+
+async function webSearch(query) {
+  const res = await fetch(TAVILY_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query })
+  });
+  const data = await res.json();
+  if (!res.ok || !data.results) return `[Search error] ${JSON.stringify(data)}`;
+  return data.results.map(r => `- ${r.title}: ${(r.content || "").slice(0, 200)}`).join("\n\n");
+}
+
+// ---------------- Routing ----------------
+const TAGS = {
+  "code:": "code", "debug:": "debug", "math:": "reasoning", "reason:": "reasoning",
+  "writing:": "writing", "design:": "design", "search:": "search", "review:": "review",
+};
+
+function detectRole(task) {
+  const lower = task.toLowerCase();
+  for (const tag in TAGS) {
+    if (lower.startsWith(tag)) return [TAGS[tag], task.slice(tag.length).trim()];
+  }
+  if (/traceback|error|bug|not working|crash|fails/.test(lower)) return ["debug", task];
+  if (/function|script|code|html|css|javascript|python|api/.test(lower)) return ["code", task];
+  if (/calculate|solve|equation|how many|logic/.test(lower)) return ["reasoning", task];
+  if (/essay|article|blog|write a|letter|email/.test(lower)) return ["writing", task];
+  if (/color|layout|ui|design|style|theme/.test(lower)) return ["design", task];
+  if (/latest|current|news|who is|search/.test(lower)) return ["search", task];
+  return ["head", task];
+}
+
+function isComplex(task) {
+  const lower = task.toLowerCase();
+  if (lower.startsWith("plan:")) return true;
+  const signals = ["and then", " and ", "full", "entire", "complete", "end to end", "build a", "create a", "step by step"];
+  const hits = signals.filter(s => lower.includes(s)).length;
+  return task.split(" ").length > 25 || hits >= 2;
+}
+
+async function runSimple(task) {
+  const [role, clean] = detectRole(task);
+  if (role === "search") {
+    const results = await webSearch(clean);
+    const summary = await callAgent("head", `Summarize these search results for: ${clean}\n\n${results}`);
+    return { result: summary, role };
+  }
+  const result = await callAgent(role, clean);
+  return { result, role };
+}
+
+async function runMultistep(task, traceEl) {
+  const clean = task.toLowerCase().startsWith("plan:") ? task.slice(5).trim() : task;
+
+  const planPrompt = `Break this task into 2-5 ordered steps. For each step pick exactly one agent from: code, debug, reasoning, writing, design, search.
+Format EXACTLY like this, one per line, nothing else:
+STEP | agent | short description of what to do
+
+Task: ${clean}`;
+
+  const planRaw = await callAgent("head", planPrompt, 400);
+  const steps = [];
+  planRaw.split("\n").forEach(line => {
+    const parts = line.split("|").map(p => p.trim());
+    if (parts.length === 3 && ["code","debug","reasoning","writing","design","search"].includes(parts[1])) {
+      steps.push([parts[1], parts[2]]);
+    }
+  });
+
+  if (steps.length === 0) {
+    const result = await callAgent("head", clean);
+    return { result, role: "head" };
+  }
+
+  updatePipeline(traceEl, steps.map(s => s[0]), -1);
+
+  const stepResults = [];
+  for (let i = 0; i < steps.length; i++) {
+    const [role, desc] = steps[i];
+    updatePipeline(traceEl, steps.map(s => s[0]), i);
+    let result;
+    if (role === "search") {
+      const results = await webSearch(desc);
+      result = await callAgent("head", `Summarize for: ${desc}\n\n${results}`);
+    } else {
+      result = await callAgent(role, desc);
+    }
+    stepResults.push([role, desc, result]);
+  }
+  updatePipeline(traceEl, steps.map(s => s[0]), steps.length);
+
+  const combined = stepResults.map(([r,d,res]) => `[${r.toUpperCase()}] ${d}\n${res}`).join("\n\n");
+  const final = await callAgent("head", `Combine these sub-task results into one clear final answer for: ${clean}\n\n${combined}`, 1000);
+  return { result: final, role: "multi-step", steps: stepResults };
+}
+
+function updatePipeline(el, roles, activeIndex) {
+  el.innerHTML = roles.map((r, i) => {
+    let cls = "";
+    if (i < activeIndex) cls = "done";
+    else if (i === activeIndex) cls = "running";
+    return `<span class="pipeline-node ${cls}">${r}</span>` + (i < roles.length - 1 ? `<span class="pipeline-arrow">→</span>` : "");
+  }).join("");
+}
+
+// ---------------- Rendering ----------------
+function escapeHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function formatContent(text) {
+  // basic code block + inline code rendering
+  let html = escapeHtml(text);
+  html = html.replace(/```([\s\S]*?)```/g, (m, code) => `<pre>${code.trim()}</pre>`);
+  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  return html;
+}
+
+function addMessage(role, content, tag = null) {
+  const log = document.getElementById("log");
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + (role === "user" ? "user" : "assistant");
+  wrap.innerHTML = `
+    ${tag ? `<div class="msg-tag">${tag}</div>` : ""}
+    <div class="bubble">${formatContent(content)}</div>
+  `;
+  log.appendChild(wrap);
+  log.scrollTop = log.scrollHeight;
+  return wrap;
+}
+
+// ---------------- History persistence ----------------
+async function saveMessage(uid, role, content) {
+  await supabase.from("chat_history").insert({ user_id: uid, role, content });
+}
+
+async function loadHistory(uid) {
+  const { data } = await supabase.from("chat_history").select("*").eq("user_id", uid).order("created_at");
+  return data || [];
+}
+
+// ---------------- Flow control ----------------
+async function connect(uid) {
+  userId = uid.trim();
+  if (!userId) return;
+  document.getElementById("gateView").style.display = "none";
+  document.getElementById("chatView").style.display = "flex";
+  document.getElementById("sessionUser").textContent = userId;
+  document.getElementById("loggedInAs").textContent = "user: " + userId;
+
+  document.getElementById("log").innerHTML = "";
+  messages = await loadHistory(userId);
+  messages.forEach(m => addMessage(m.role, m.content));
+}
+
+document.getElementById("gateBtn").onclick = () => connect(document.getElementById("gateInput").value);
+document.getElementById("gateInput").addEventListener("keydown", e => { if (e.key === "Enter") connect(e.target.value); });
+
+document.getElementById("loadBtn").onclick = () => connect(document.getElementById("uidInput").value);
+
+async function sendTask() {
+  const input = document.getElementById("taskInput");
+  const task = input.value.trim();
+  if (!task || !userId) return;
+  input.value = "";
+  document.getElementById("sendBtn").disabled = true;
+
+  addMessage("user", task);
+  await saveMessage(userId, "user", task);
+
+  const thinkingWrap = addMessage("assistant", "");
+  const bubble = thinkingWrap.querySelector(".bubble");
+  const traceEl = document.createElement("div");
+  traceEl.className = "pipeline";
+  thinkingWrap.insertBefore(traceEl, bubble);
+  bubble.innerHTML = `<span class="thinking">processing</span>`;
+
+  try {
+    let output, role, steps;
+    if (isComplex(task)) {
+      const res = await runMultistep(task, traceEl);
+      output = res.result; role = res.role; steps = res.steps;
+      renderProcessList(null);
+    } else {
+      renderProcessList(detectRole(task)[0]);
+      const res = await runSimple(task);
+      output = res.result; role = res.role;
+    }
+
+    thinkingWrap.querySelector(".msg-tag") || (() => {
+      const tagEl = document.createElement("div");
+      tagEl.className = "msg-tag";
+      tagEl.textContent = role === "multi-step" ? "multi-step" : role;
+      thinkingWrap.insertBefore(tagEl, traceEl);
+    })();
+
+    bubble.innerHTML = formatContent(output);
+    document.getElementById("log").scrollTop = document.getElementById("log").scrollHeight;
+
+    await saveMessage(userId, "assistant", output);
+    renderProcessList(null);
+  } catch (err) {
+    bubble.innerHTML = "[Error] " + escapeHtml(String(err));
+  }
+
+  document.getElementById("sendBtn").disabled = false;
+}
+
+document.getElementById("sendBtn").onclick = sendTask;
+document.getElementById("taskInput").addEventListener("keydown", e => { if (e.key === "Enter") sendTask(); });
+</script>
+
+</body>
+</html>
