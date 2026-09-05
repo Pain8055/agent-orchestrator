@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Agent Team</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -223,13 +223,18 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 24px;
     display: flex;
     flex-direction: column;
     gap: 18px;
+    width: 100%;
   }
 
-  .msg { max-width: 720px; }
+  .msg {
+    max-width: 720px;
+    min-width: 0;
+  }
   .msg.user { align-self: flex-end; }
   .msg.assistant { align-self: flex-start; }
 
@@ -252,7 +257,10 @@
     font-size: 14px;
     line-height: 1.6;
     white-space: pre-wrap;
-    word-wrap: break-word;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    max-width: 100%;
+    min-width: 0;
   }
 
   .msg.user .bubble {
