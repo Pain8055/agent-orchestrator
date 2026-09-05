@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Agent Team</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -21,19 +21,23 @@
     --sans: 'IBM Plex Sans', sans-serif;
   }
 
+:root {
+    --vh: 1vh;
+  }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
   body {
     background: var(--bg);
     color: var(--text);
     font-family: var(--sans);
-    height: 100vh; height: 100dvh;
+    height: 100vh; height: 100dvh; height: calc(var(--vh, 1vh) * 100);
     overflow: hidden;
   }
 
   .app {
     display: flex;
-    height: 100vh; height: 100dvh;
+    height: 100vh; height: 100dvh; height: calc(var(--vh, 1vh) * 100);
     min-height: 0;
   }
 
@@ -64,7 +68,7 @@
       position: fixed;
       top: 0;
       left: 0;
-      height: 100vh; height: 100dvh;
+      height: 100vh; height: 100dvh; height: calc(var(--vh, 1vh) * 100);
       z-index: 100;
       box-shadow: 4px 0 24px rgba(0,0,0,0.5);
     }
@@ -468,12 +472,21 @@
 
 <script>
 // ---------------- CONFIG — fill these in ----------------
-const SUPABASE_URL = "https://qhxjsnmmhhichyxbvjro.supabase.co";       // e.g. https://xxxxx.supabase.co
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFoeGpzbm1taGhpY2h5eGJ2anJvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg1MjAxMzEsImV4cCI6MjEwNDA5NjEzMX0.SCgtGoNMqMffxRN_D2PstCTvFJkYAWlCSmBN82rniK4";  // anon public key
+const SUPABASE_URL = "https://qhxjsnmmhhichyxbvjro.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFoeGpzbm1taGhpY2h5eGJ2anJvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg1MjAxMzEsImV4cCI6MjEwNDA5NjEzMX0.SCgtGoNMqMffxRN_D2PstCTvFJkYAWlCSmBN82rniK4";
 
 const GROQ_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/smooth-task";
 const TAVILY_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/Tavily-chat1";
 // ----------------------------------------------------------
+
+// ---------------- Real viewport height fix (mobile browser chrome bug) ----------------
+function setRealVH() {
+  const vh = window.innerHeight * 0.01;
+  document.documentElement.style.setProperty('--vh', `${vh}px`);
+}
+setRealVH();
+window.addEventListener('resize', setRealVH);
+window.addEventListener('orientationchange', setRealVH);
 
 // ---------------- Sidebar toggle ----------------
 const sidebar = document.getElementById("sidebar");
