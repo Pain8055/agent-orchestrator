@@ -286,6 +286,87 @@
     border-radius: 14px;
   }
 
+  .msg { position: relative; }
+
+  .edit-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 2px 4px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    display: block;
+    margin-left: auto;
+    margin-top: 4px;
+  }
+
+  .msg.user:hover .edit-btn { opacity: 1; }
+  .edit-btn:hover { color: var(--accent); }
+
+  .edit-textarea {
+    width: 100%;
+    min-height: 70px;
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    padding: 10px;
+    resize: vertical;
+    outline: none;
+  }
+
+  .edit-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .edit-actions button {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 6px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+  }
+
+  .edit-actions .edit-save {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+
+  .version-switcher {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+
+  .version-switcher button {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0 4px;
+  }
+
+  .version-switcher button:hover { color: var(--accent); }
+  .version-switcher button:disabled { opacity: 0.3; cursor: not-allowed; }
+
   .msg.assistant .bubble {
     background: transparent;
     border: none;
@@ -870,17 +951,45 @@ function formatContent(text) {
   return html;
 }
 
-function addMessage(role, content, tag = null) {
+function addMessage(role, content, tag = null, msgId = null) {
   const log = document.getElementById("log");
   const wrap = document.createElement("div");
   wrap.className = "msg " + (role === "user" ? "user" : "assistant");
+  if (msgId) wrap.dataset.msgId = msgId;
+
+  const editBtn = role === "user" ? `<button class="edit-btn" title="Edit">✎</button>` : "";
+
   wrap.innerHTML = `
     ${tag ? `<div class="msg-tag">${tag}</div>` : ""}
+    <div class="version-switcher" style="display:none;"></div>
     <div class="bubble">${formatContent(content)}</div>
+    ${editBtn}
   `;
   log.appendChild(wrap);
   log.scrollTop = log.scrollHeight;
+
+  if (role === "user" && msgId) {
+    wrap.querySelector(".edit-btn").onclick = () => startEdit(wrap, msgId, content);
+  }
   return wrap;
+}
+
+function startEdit(wrap, msgId, oldContent) {
+  const bubble = wrap.querySelector(".bubble");
+  bubble.dataset.original = oldContent;
+  bubble.innerHTML = `
+    <textarea class="edit-textarea">${escapeHtml(oldContent)}</textarea>
+    <div class="edit-actions">
+      <button class="edit-cancel">Cancel</button>
+      <button class="edit-save">Save & resend</button>
+    </div>
+  `;
+  const textarea = bubble.querySelector(".edit-textarea");
+  textarea.focus();
+  bubble.querySelector(".edit-cancel").onclick = () => {
+    bubble.innerHTML = formatContent(oldContent);
+  };
+  bubble.querySelector(".edit-save").onclick = () => submitEdit(wrap, msgId, textarea.value.trim());
 }
 
 // ---------------- Conversation persistence ----------------
@@ -890,8 +999,11 @@ async function loadConversations(uid) {
 }
 
 async function createConversation(uid, title = "New chat") {
-  const { data } = await sb.from("conversations").insert({ user_id: uid, title }).select().single();
-  return data;
+  const { data: conv } = await sb.from("conversations").insert({ user_id: uid, title }).select().single();
+  const { data: branch } = await sb.from("branches").insert({ conversation_id: conv.id, parent_branch_id: null }).select().single();
+  await sb.from("conversations").update({ active_branch_id: branch.id }).eq("id", conv.id);
+  conv.active_branch_id = branch.id;
+  return conv;
 }
 
 async function touchConversation(convId, title = null) {
@@ -900,13 +1012,41 @@ async function touchConversation(convId, title = null) {
   await sb.from("conversations").update(update).eq("id", convId);
 }
 
-async function loadMessages(convId) {
-  const { data } = await sb.from("chat_history").select("*").eq("conversation_id", convId).order("created_at");
+async function loadMessages(branchId) {
+  const { data } = await sb.from("chat_history").select("*").eq("branch_id", branchId).order("id");
   return data || [];
 }
 
-async function saveMessage(uid, convId, role, content) {
-  await sb.from("chat_history").insert({ user_id: uid, conversation_id: convId, role, content });
+async function saveMessage(uid, convId, branchId, role, content) {
+  const { data } = await sb.from("chat_history").insert({ user_id: uid, conversation_id: convId, branch_id: branchId, role, content }).select().single();
+  return data;
+}
+
+// Create a new branch by copying everything before `beforeMessageId` from sourceBranchId
+async function forkBranch(convId, sourceBranchId, beforeMessageId) {
+  const { data: newBranch } = await sb.from("branches").insert({ conversation_id: convId, parent_branch_id: sourceBranchId }).select().single();
+
+  const { data: priorMessages } = await sb.from("chat_history")
+    .select("*")
+    .eq("branch_id", sourceBranchId)
+    .lt("id", beforeMessageId)
+    .order("id");
+
+  if (priorMessages && priorMessages.length) {
+    const copies = priorMessages.map(m => ({
+      user_id: m.user_id, conversation_id: convId, branch_id: newBranch.id, role: m.role, content: m.content
+    }));
+    await sb.from("chat_history").insert(copies);
+  }
+
+  await sb.from("conversations").update({ active_branch_id: newBranch.id }).eq("id", convId);
+  return newBranch.id;
+}
+
+// Find sibling branches (versions) that diverge from the same parent branch
+async function getSiblingBranches(parentBranchId) {
+  const { data } = await sb.from("branches").select("*").eq("parent_branch_id", parentBranchId).order("id");
+  return data || [];
 }
 
 function renderConvList(convs, activeId) {
@@ -922,14 +1062,27 @@ function renderConvList(convs, activeId) {
 }
 
 let allConvs = [];
+let currentBranchId = null;
 
 async function openConversation(conv) {
   currentConvId = conv.id;
+  currentBranchId = conv.active_branch_id;
+
+  // Backward compatibility: conversations created before branching existed
+  if (!currentBranchId) {
+    const { data: branch } = await sb.from("branches").insert({ conversation_id: conv.id, parent_branch_id: null }).select().single();
+    currentBranchId = branch.id;
+    await sb.from("conversations").update({ active_branch_id: currentBranchId }).eq("id", conv.id);
+    conv.active_branch_id = currentBranchId;
+  }
+
   renderConvList(allConvs, currentConvId);
   document.getElementById("log").innerHTML = "";
-  messages = await loadMessages(conv.id);
-  messages.forEach(m => addMessage(m.role, m.content));
-  // close sidebar on mobile after picking a conversation
+  messages = await loadMessages(currentBranchId);
+  versionMap = await buildVersionMap(messages);
+  for (const m of messages) {
+    await renderStoredMessage(m);
+  }
   if (window.innerWidth <= 768) toggleSidebar();
 }
 
@@ -938,6 +1091,7 @@ async function startNewChat() {
   allConvs.unshift(conv);
   renderConvList(allConvs, conv.id);
   currentConvId = conv.id;
+  currentBranchId = conv.active_branch_id;
   document.getElementById("log").innerHTML = "";
   messages = [];
   if (window.innerWidth <= 768) toggleSidebar();
@@ -980,8 +1134,9 @@ async function sendTask() {
   input.value = "";
   document.getElementById("sendBtn").disabled = true;
 
-  addMessage("user", task);
-  await saveMessage(userId, currentConvId, "user", task);
+  const userMsg = await saveMessage(userId, currentConvId, currentBranchId, "user", task);
+  addMessage("user", task, null, userMsg.id);
+  messages.push(userMsg);
 
   // Auto-title the conversation from the first message
   const conv = allConvs.find(c => c.id === currentConvId);
@@ -994,6 +1149,11 @@ async function sendTask() {
     await touchConversation(currentConvId);
   }
 
+  await runAndSaveResponse(task);
+  document.getElementById("sendBtn").disabled = false;
+}
+
+async function runAndSaveResponse(task) {
   const thinkingWrap = addMessage("assistant", "");
   const bubble = thinkingWrap.querySelector(".bubble");
   const traceEl = document.createElement("div");
@@ -1002,10 +1162,10 @@ async function sendTask() {
   bubble.innerHTML = `<span class="thinking">processing</span>`;
 
   try {
-    let output, role, steps;
+    let output, role;
     if (isComplex(task)) {
       const res = await runMultistep(task, traceEl);
-      output = res.result; role = res.role; steps = res.steps;
+      output = res.result; role = res.role;
     } else {
       const res = await runSimple(task);
       output = res.result; role = res.role;
@@ -1021,12 +1181,87 @@ async function sendTask() {
     bubble.innerHTML = formatContent(output);
     document.getElementById("log").scrollTop = document.getElementById("log").scrollHeight;
 
-    await saveMessage(userId, currentConvId, "assistant", output);
+    const savedMsg = await saveMessage(userId, currentConvId, currentBranchId, "assistant", output);
+    messages.push(savedMsg);
   } catch (err) {
     bubble.innerHTML = "[Error] " + escapeHtml(String(err));
   }
+}
 
-  document.getElementById("sendBtn").disabled = false;
+// ---------------- Editing & version switching ----------------
+let versionMap = {};
+
+async function buildVersionMap(msgs) {
+  const groups = [...new Set(msgs.filter(m => m.version_group).map(m => m.version_group))];
+  if (!groups.length) return {};
+  const { data } = await sb.from("chat_history").select("id,branch_id,version_group").in("version_group", groups).order("id");
+  const map = {};
+  (data || []).forEach(row => {
+    if (!map[row.version_group]) map[row.version_group] = [];
+    map[row.version_group].push(row);
+  });
+  return map;
+}
+
+async function renderStoredMessage(m) {
+  const wrap = addMessage(m.role, m.content, null, m.id);
+  if (m.role === "user" && m.version_group && versionMap[m.version_group] && versionMap[m.version_group].length > 1) {
+    setupVersionSwitcher(wrap, m.version_group, m.id);
+  }
+}
+
+function setupVersionSwitcher(wrap, group, currentMsgId) {
+  const versions = versionMap[group];
+  const idx = versions.findIndex(v => v.id === currentMsgId);
+  const sw = wrap.querySelector(".version-switcher");
+  sw.style.display = "flex";
+  sw.innerHTML = `<button class="v-prev">‹</button><span>${idx + 1}/${versions.length}</span><button class="v-next">›</button>`;
+  const prevBtn = sw.querySelector(".v-prev");
+  const nextBtn = sw.querySelector(".v-next");
+  prevBtn.disabled = idx <= 0;
+  nextBtn.disabled = idx >= versions.length - 1;
+  prevBtn.onclick = () => switchVersion(versions[idx - 1].branch_id);
+  nextBtn.onclick = () => switchVersion(versions[idx + 1].branch_id);
+}
+
+async function switchVersion(targetBranchId) {
+  await sb.from("conversations").update({ active_branch_id: targetBranchId }).eq("id", currentConvId);
+  const conv = allConvs.find(c => c.id === currentConvId);
+  if (conv) conv.active_branch_id = targetBranchId;
+  currentBranchId = targetBranchId;
+  document.getElementById("log").innerHTML = "";
+  messages = await loadMessages(targetBranchId);
+  versionMap = await buildVersionMap(messages);
+  for (const m of messages) await renderStoredMessage(m);
+}
+
+async function submitEdit(wrap, msgId, newContent) {
+  if (!newContent) return;
+
+  let m = messages.find(x => x.id === msgId);
+  let group = m ? m.version_group : null;
+  if (!group) {
+    group = msgId;
+    await sb.from("chat_history").update({ version_group: group }).eq("id", msgId);
+  }
+
+  const newBranchId = await forkBranch(currentConvId, currentBranchId, msgId);
+
+  const { data: newMsg } = await sb.from("chat_history").insert({
+    user_id: userId, conversation_id: currentConvId, branch_id: newBranchId,
+    role: "user", content: newContent, version_group: group
+  }).select().single();
+
+  currentBranchId = newBranchId;
+  const conv = allConvs.find(c => c.id === currentConvId);
+  if (conv) conv.active_branch_id = newBranchId;
+
+  document.getElementById("log").innerHTML = "";
+  messages = await loadMessages(newBranchId);
+  versionMap = await buildVersionMap(messages);
+  for (const mm of messages) await renderStoredMessage(mm);
+
+  await runAndSaveResponse(newContent);
 }
 
 document.getElementById("sendBtn").onclick = sendTask;
