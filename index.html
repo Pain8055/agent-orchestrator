@@ -426,6 +426,25 @@
   }
   .bubble li { margin-bottom: 4px; }
   .bubble ul:last-child, .bubble ol:last-child { margin-bottom: 0; }
+  .bubble li ul, .bubble li ol { margin: 4px 0 4px 0; }
+
+  .bubble table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 10px 0;
+    font-size: 13px;
+  }
+  .bubble th, .bubble td {
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    text-align: left;
+  }
+  .bubble th {
+    background: var(--bg);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-weight: 600;
+  }
 
   .bubble code {
     font-family: var(--mono);
@@ -877,12 +896,12 @@ function escapeHtml(s) {
 function formatContent(text) {
   const escaped = escapeHtml(text);
   const lines = escaped.split("\n");
-  let html = "";
+  let blocks = []; // sequence of rendered HTML strings, in order
   let inCodeBlock = false;
   let codeBuffer = [];
-  let listBuffer = [];
-  let listType = null; // 'ul' or 'ol'
   let paraBuffer = [];
+  let listStack = []; // {type, indent, listObj:{type, items:[{text, childList}]}}
+  let tableRows = null; // array of arrays while collecting a table
 
   function inlineFormat(line) {
     line = line.replace(/`([^`]+)`/g, "<code>$1</code>");
@@ -893,18 +912,54 @@ function formatContent(text) {
 
   function flushPara() {
     if (paraBuffer.length) {
-      html += `<p>${paraBuffer.map(inlineFormat).join("<br>")}</p>`;
+      blocks.push(`<p>${paraBuffer.map(inlineFormat).join("<br>")}</p>`);
       paraBuffer = [];
     }
   }
 
-  function flushList() {
-    if (listBuffer.length) {
-      const tag = listType;
-      html += `<${tag}>` + listBuffer.map(li => `<li>${inlineFormat(li)}</li>`).join("") + `</${tag}>`;
-      listBuffer = [];
-      listType = null;
+  function renderList(listObj) {
+    const tag = listObj.type;
+    return `<${tag}>` + listObj.items.map(item =>
+      `<li>${inlineFormat(item.text)}${item.childList ? renderList(item.childList) : ""}</li>`
+    ).join("") + `</${tag}>`;
+  }
+
+  function closeListsDownTo(indent) {
+    while (listStack.length && listStack[listStack.length - 1].indent >= indent) {
+      const finished = listStack.pop();
+      if (listStack.length) {
+        const parentList = listStack[listStack.length - 1].listObj;
+        parentList.items[parentList.items.length - 1].childList = finished.listObj;
+      } else {
+        blocks.push(renderList(finished.listObj));
+      }
     }
+  }
+
+  function flushAllLists() { closeListsDownTo(-1); }
+
+  function flushTable() {
+    if (tableRows && tableRows.length) {
+      const [header, ...body] = tableRows;
+      let html = "<table><thead><tr>" + header.map(c => `<th>${inlineFormat(c)}</th>`).join("") + "</tr></thead>";
+      if (body.length) {
+        html += "<tbody>" + body.map(row => "<tr>" + row.map(c => `<td>${inlineFormat(c)}</td>`).join("") + "</tr>").join("") + "</tbody>";
+      }
+      html += "</table>";
+      blocks.push(html);
+    }
+    tableRows = null;
+  }
+
+  function parseTableRow(line) {
+    let cells = line.trim();
+    if (cells.startsWith("|")) cells = cells.slice(1);
+    if (cells.endsWith("|")) cells = cells.slice(0, -1);
+    return cells.split("|").map(c => c.trim());
+  }
+
+  function isTableSeparator(line) {
+    return /^\|?[\s:|-]+\|?$/.test(line.trim()) && line.includes("-");
   }
 
   for (let raw of lines) {
@@ -914,59 +969,87 @@ function formatContent(text) {
     // Code fences
     if (trimmed.startsWith("```")) {
       if (inCodeBlock) {
-        html += `<pre>${codeBuffer.join("\n")}</pre>`;
+        blocks.push(`<pre>${codeBuffer.join("\n")}</pre>`);
         codeBuffer = [];
         inCodeBlock = false;
       } else {
-        flushPara(); flushList();
+        flushPara(); flushAllLists(); flushTable();
         inCodeBlock = true;
       }
       continue;
     }
     if (inCodeBlock) { codeBuffer.push(line); continue; }
 
+    // Table detection: a line with pipes, followed conceptually by a separator row
+    if (trimmed.includes("|") && !tableRows) {
+      // peek: is this the header row of a table? We detect by checking if content looks tabular
+      // We'll treat any pipe-containing line as a potential table start, and confirm via the next line being a separator.
+      tableRows = [parseTableRow(trimmed)];
+      continue;
+    }
+    if (tableRows && isTableSeparator(trimmed)) {
+      continue; // skip the |---|---| row
+    }
+    if (tableRows && trimmed.includes("|")) {
+      tableRows.push(parseTableRow(trimmed));
+      continue;
+    }
+    if (tableRows && !trimmed.includes("|")) {
+      // was it actually a real table (more than just header) or a false positive single line?
+      if (tableRows.length > 1) {
+        flushTable();
+      } else {
+        // false positive: just a line with a pipe character, treat as normal text
+        paraBuffer.push(tableRows[0].join(" | "));
+        tableRows = null;
+      }
+      // fall through to process this line normally below
+    }
+
     // Headers
     const headerMatch = trimmed.match(/^(#{1,4})\s+(.*)$/);
     if (headerMatch) {
-      flushPara(); flushList();
-      const level = Math.min(headerMatch[1].length + 1, 4); // ### -> h4 max, keep sizes sane
-      html += `<h${level}>${inlineFormat(headerMatch[2])}</h${level}>`;
+      flushPara(); flushAllLists(); flushTable();
+      const level = Math.min(headerMatch[1].length + 1, 4);
+      blocks.push(`<h${level}>${inlineFormat(headerMatch[2])}</h${level}>`);
       continue;
     }
 
-    // Bullet list
-    const bulletMatch = trimmed.match(/^[-*]\s+(.*)$/);
-    if (bulletMatch) {
+    // Bullet list (indentation-aware)
+    const bulletMatch = line.match(/^(\s*)[-*]\s+(.*)$/);
+    const numMatch = line.match(/^(\s*)\d+\.\s+(.*)$/);
+    if (bulletMatch || numMatch) {
       flushPara();
-      if (listType !== "ul") { flushList(); listType = "ul"; }
-      listBuffer.push(bulletMatch[1]);
+      const indent = (bulletMatch || numMatch)[1].length;
+      const type = bulletMatch ? "ul" : "ol";
+      const itemText = (bulletMatch || numMatch)[2];
+
+      closeListsDownTo(indent + 1);
+      if (listStack.length && listStack[listStack.length - 1].indent === indent && listStack[listStack.length - 1].type !== type) {
+        closeListsDownTo(indent);
+      }
+      if (!listStack.length || listStack[listStack.length - 1].indent < indent) {
+        listStack.push({ type, indent, listObj: { type, items: [] } });
+      }
+      listStack[listStack.length - 1].listObj.items.push({ text: itemText, childList: null });
       continue;
     }
 
-    // Numbered list
-    const numMatch = trimmed.match(/^\d+\.\s+(.*)$/);
-    if (numMatch) {
-      flushPara();
-      if (listType !== "ol") { flushList(); listType = "ol"; }
-      listBuffer.push(numMatch[1]);
-      continue;
-    }
-
-    // Blank line = paragraph break
+    // Blank line = paragraph/list/table break
     if (trimmed === "") {
-      flushPara(); flushList();
+      flushPara(); flushAllLists(); flushTable();
       continue;
     }
 
     // Regular text line
-    flushList();
+    flushAllLists();
     paraBuffer.push(line);
   }
 
-  flushPara(); flushList();
-  if (inCodeBlock && codeBuffer.length) html += `<pre>${codeBuffer.join("\n")}</pre>`;
+  flushPara(); flushAllLists(); flushTable();
+  if (inCodeBlock && codeBuffer.length) blocks.push(`<pre>${codeBuffer.join("\n")}</pre>`);
 
-  return html;
+  return blocks.join("");
 }
 
 function addMessage(role, content, tag = null, msgId = null) {
