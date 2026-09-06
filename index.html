@@ -155,33 +155,49 @@
     word-break: break-all;
   }
 
-  .process-list { flex: 1; }
-
-  .process-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-family: var(--mono);
-    font-size: 12px;
-    padding: 7px 0;
-    color: var(--text-dim);
-    transition: color 0.2s;
-  }
-
-  .process-item.active { color: var(--accent); }
-
-  .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--text-dim);
-    flex-shrink: 0;
-    transition: all 0.2s;
-  }
-
-  .dot.active {
+  .new-chat-btn {
+    width: 100%;
     background: var(--accent);
-    box-shadow: 0 0 6px var(--accent);
+    color: var(--bg);
+    border: none;
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 12px;
+    padding: 9px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-bottom: 14px;
+    letter-spacing: 0.03em;
+  }
+
+  .new-chat-btn:hover { opacity: 0.85; }
+
+  .conv-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .conv-item {
+    font-family: var(--sans);
+    font-size: 13px;
+    color: var(--text-dim);
+    padding: 8px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 0.15s;
+  }
+
+  .conv-item:hover { background: var(--border); color: var(--text); }
+
+  .conv-item.active {
+    background: var(--accent-dim);
+    color: var(--accent);
   }
 
   .hint {
@@ -267,6 +283,13 @@
     background: var(--accent-dim);
     border-color: var(--accent);
     color: #E8FFFB;
+    border-radius: 14px;
+  }
+
+  .msg.assistant .bubble {
+    background: transparent;
+    border: none;
+    padding: 2px 0;
   }
 
   .bubble pre {
@@ -341,12 +364,23 @@
 
   /* ---------- Input ---------- */
   .input-bar {
-    border-top: 1px solid var(--border);
-    padding: 16px 24px;
-    display: flex;
-    gap: 10px;
-    align-items: center;
+    padding: 16px 24px 20px;
   }
+
+  .input-pill {
+    max-width: 800px;
+    margin: 0 auto;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 8px 8px 18px;
+    transition: border-color 0.15s;
+  }
+
+  .input-pill:focus-within { border-color: var(--accent); }
 
   .prompt-symbol {
     font-family: var(--mono);
@@ -356,28 +390,28 @@
 
   #taskInput {
     flex: 1;
-    background: var(--panel);
-    border: 1px solid var(--border);
+    background: transparent;
+    border: none;
     color: var(--text);
-    font-family: var(--mono);
+    font-family: var(--sans);
     font-size: 14px;
-    padding: 10px 12px;
-    border-radius: 6px;
+    padding: 8px 0;
     outline: none;
   }
-
-  #taskInput:focus { border-color: var(--accent); }
 
   #sendBtn {
     background: var(--accent);
     color: var(--bg);
     border: none;
-    font-family: var(--mono);
-    font-weight: 600;
-    font-size: 13px;
-    padding: 10px 18px;
-    border-radius: 6px;
+    font-size: 15px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
   }
 
   #sendBtn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -440,7 +474,9 @@
     </div>
     <div class="logged-in-as" id="loggedInAs"></div>
 
-    <div class="process-list" id="processList"></div>
+    <button id="newChatBtn" class="new-chat-btn" style="display:none;">+ New chat</button>
+
+    <div class="conv-list" id="convList"></div>
 
     <div class="hint">
       Force an agent: <code>code:</code> <code>debug:</code> <code>math:</code><br>
@@ -470,9 +506,11 @@
     <div id="chatView" style="display:none; flex:1; flex-direction:column; min-height:0;">
       <div class="log" id="log"></div>
       <div class="input-bar">
-        <span class="prompt-symbol">&gt;</span>
-        <input type="text" id="taskInput" placeholder="Type a task...">
-        <button id="sendBtn">Run</button>
+        <div class="input-pill">
+          <span class="prompt-symbol">&gt;</span>
+          <input type="text" id="taskInput" placeholder="Type a task...">
+          <button id="sendBtn" title="Send">➤</button>
+        </div>
       </div>
     </div>
   </div>
@@ -564,20 +602,8 @@ const AGENTS = {
 const AGENT_LABELS = ["head","code","debug","reasoning","writing","design","search","review"];
 
 let userId = "";
+let currentConvId = null;
 let messages = [];
-
-// ---------------- Sidebar process list ----------------
-function renderProcessList(activeAgent = null) {
-  const list = document.getElementById("processList");
-  list.innerHTML = "";
-  AGENT_LABELS.forEach(name => {
-    const item = document.createElement("div");
-    item.className = "process-item" + (name === activeAgent ? " active" : "");
-    item.innerHTML = `<span class="dot${name === activeAgent ? ' active' : ''}"></span>${name}`;
-    list.appendChild(item);
-  });
-}
-renderProcessList();
 
 // ---------------- API calls ----------------
 async function callAgent(role, prompt, maxTokens = null) {
@@ -745,14 +771,64 @@ function addMessage(role, content, tag = null) {
   return wrap;
 }
 
-// ---------------- History persistence ----------------
-async function saveMessage(uid, role, content) {
-  await sb.from("chat_history").insert({ user_id: uid, role, content });
+// ---------------- Conversation persistence ----------------
+async function loadConversations(uid) {
+  const { data } = await sb.from("conversations").select("*").eq("user_id", uid).order("updated_at", { ascending: false });
+  return data || [];
 }
 
-async function loadHistory(uid) {
-  const { data } = await sb.from("chat_history").select("*").eq("user_id", uid).order("created_at");
+async function createConversation(uid, title = "New chat") {
+  const { data } = await sb.from("conversations").insert({ user_id: uid, title }).select().single();
+  return data;
+}
+
+async function touchConversation(convId, title = null) {
+  const update = { updated_at: new Date().toISOString() };
+  if (title) update.title = title;
+  await sb.from("conversations").update(update).eq("id", convId);
+}
+
+async function loadMessages(convId) {
+  const { data } = await sb.from("chat_history").select("*").eq("conversation_id", convId).order("created_at");
   return data || [];
+}
+
+async function saveMessage(uid, convId, role, content) {
+  await sb.from("chat_history").insert({ user_id: uid, conversation_id: convId, role, content });
+}
+
+function renderConvList(convs, activeId) {
+  const list = document.getElementById("convList");
+  list.innerHTML = "";
+  convs.forEach(c => {
+    const item = document.createElement("div");
+    item.className = "conv-item" + (c.id === activeId ? " active" : "");
+    item.textContent = c.title;
+    item.onclick = () => openConversation(c);
+    list.appendChild(item);
+  });
+}
+
+let allConvs = [];
+
+async function openConversation(conv) {
+  currentConvId = conv.id;
+  renderConvList(allConvs, currentConvId);
+  document.getElementById("log").innerHTML = "";
+  messages = await loadMessages(conv.id);
+  messages.forEach(m => addMessage(m.role, m.content));
+  // close sidebar on mobile after picking a conversation
+  if (window.innerWidth <= 768) toggleSidebar();
+}
+
+async function startNewChat() {
+  const conv = await createConversation(userId, "New chat");
+  allConvs.unshift(conv);
+  renderConvList(allConvs, conv.id);
+  currentConvId = conv.id;
+  document.getElementById("log").innerHTML = "";
+  messages = [];
+  if (window.innerWidth <= 768) toggleSidebar();
 }
 
 // ---------------- Flow control ----------------
@@ -764,14 +840,21 @@ async function connect(uid) {
     document.getElementById("chatView").style.display = "flex";
     document.getElementById("sessionUser").textContent = userId;
     document.getElementById("loggedInAs").textContent = "user: " + userId;
+    document.getElementById("newChatBtn").style.display = "block";
 
-    document.getElementById("log").innerHTML = "";
-    messages = await loadHistory(userId);
-    messages.forEach(m => addMessage(m.role, m.content));
+    allConvs = await loadConversations(userId);
+    if (allConvs.length === 0) {
+      const conv = await createConversation(userId, "New chat");
+      allConvs = [conv];
+    }
+    renderConvList(allConvs, allConvs[0].id);
+    await openConversation(allConvs[0]);
   } catch (e) {
     showError("Connect failed: " + e.message);
   }
 }
+
+document.getElementById("newChatBtn").onclick = startNewChat;
 
 document.getElementById("gateBtn").onclick = () => connect(document.getElementById("gateInput").value);
 document.getElementById("gateInput").addEventListener("keydown", e => { if (e.key === "Enter") connect(e.target.value); });
@@ -781,12 +864,23 @@ document.getElementById("loadBtn").onclick = () => connect(document.getElementBy
 async function sendTask() {
   const input = document.getElementById("taskInput");
   const task = input.value.trim();
-  if (!task || !userId) return;
+  if (!task || !userId || !currentConvId) return;
   input.value = "";
   document.getElementById("sendBtn").disabled = true;
 
   addMessage("user", task);
-  await saveMessage(userId, "user", task);
+  await saveMessage(userId, currentConvId, "user", task);
+
+  // Auto-title the conversation from the first message
+  const conv = allConvs.find(c => c.id === currentConvId);
+  if (conv && conv.title === "New chat") {
+    const title = task.length > 40 ? task.slice(0, 40) + "…" : task;
+    conv.title = title;
+    renderConvList(allConvs, currentConvId);
+    await touchConversation(currentConvId, title);
+  } else {
+    await touchConversation(currentConvId);
+  }
 
   const thinkingWrap = addMessage("assistant", "");
   const bubble = thinkingWrap.querySelector(".bubble");
@@ -800,9 +894,7 @@ async function sendTask() {
     if (isComplex(task)) {
       const res = await runMultistep(task, traceEl);
       output = res.result; role = res.role; steps = res.steps;
-      renderProcessList(null);
     } else {
-      renderProcessList(detectRole(task)[0]);
       const res = await runSimple(task);
       output = res.result; role = res.role;
     }
@@ -817,8 +909,7 @@ async function sendTask() {
     bubble.innerHTML = formatContent(output);
     document.getElementById("log").scrollTop = document.getElementById("log").scrollHeight;
 
-    await saveMessage(userId, "assistant", output);
-    renderProcessList(null);
+    await saveMessage(userId, currentConvId, "assistant", output);
   } catch (err) {
     bubble.innerHTML = "[Error] " + escapeHtml(String(err));
   }
