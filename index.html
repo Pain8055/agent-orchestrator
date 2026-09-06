@@ -446,6 +446,14 @@
     font-weight: 600;
   }
 
+  .bubble blockquote {
+    border-left: 3px solid var(--accent);
+    padding-left: 10px;
+    margin: 6px 0 10px 0;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
   .bubble code {
     font-family: var(--mono);
     background: var(--bg);
@@ -508,6 +516,60 @@
   /* ---------- Input ---------- */
   .input-bar {
     padding: 16px 24px 20px;
+  }
+
+  .reply-preview {
+    max-width: 800px;
+    margin: 0 auto;
+    background: var(--panel);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin: 0 24px 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+  }
+
+  .reply-label {
+    font-family: var(--mono);
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .reply-quote {
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+  }
+
+  .reply-cancel {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 6px;
+    flex-shrink: 0;
+  }
+  .reply-cancel:hover { color: var(--error); }
+
+  .selection-reply-btn {
+    position: fixed;
+    z-index: 200;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
   }
 
   .input-pill {
@@ -648,6 +710,11 @@
 
     <div id="chatView" style="display:none; flex:1; flex-direction:column; min-height:0;">
       <div class="log" id="log"></div>
+      <div class="reply-preview" id="replyPreview" style="display:none;">
+        <span class="reply-label">Replying to:</span>
+        <span class="reply-quote" id="replyQuoteText"></span>
+        <button class="reply-cancel" id="replyCancelBtn">✕</button>
+      </div>
       <div class="input-bar">
         <div class="input-pill">
           <span class="prompt-symbol">&gt;</span>
@@ -658,6 +725,8 @@
     </div>
   </div>
 </div>
+
+<button class="selection-reply-btn" id="selectionReplyBtn" style="display:none;">↩ Reply</button>
 
 <script>
 // ---------------- CONFIG — fill these in ----------------
@@ -1006,6 +1075,14 @@ function formatContent(text) {
       // fall through to process this line normally below
     }
 
+    // Blockquote
+    const quoteMatch = trimmed.match(/^&gt;\s?(.*)$/);
+    if (quoteMatch) {
+      flushPara(); flushAllLists(); flushTable();
+      blocks.push(`<blockquote>${inlineFormat(quoteMatch[1])}</blockquote>`);
+      continue;
+    }
+
     // Headers
     const headerMatch = trimmed.match(/^(#{1,4})\s+(.*)$/);
     if (headerMatch) {
@@ -1063,6 +1140,7 @@ function addMessage(role, content, tag = null, msgId = null) {
     <div class="action-row">
       <button class="action-btn copy-btn" title="Copy">⧉</button>
       <button class="action-btn regen-btn" title="Regenerate">↻</button>
+      <button class="action-btn reply-btn" title="Reply">↩</button>
     </div>` : "";
 
   wrap.innerHTML = `
@@ -1081,6 +1159,7 @@ function addMessage(role, content, tag = null, msgId = null) {
   if (role === "assistant") {
     wrap.querySelector(".copy-btn").onclick = () => copyMessage(wrap);
     wrap.querySelector(".regen-btn").onclick = () => regenerateMessage(wrap, msgId);
+    wrap.querySelector(".reply-btn").onclick = () => setReplyContext(wrap.querySelector(".bubble").innerText);
   }
   return wrap;
 }
@@ -1285,10 +1364,17 @@ document.getElementById("loadBtn").onclick = () => connect(document.getElementBy
 
 async function sendTask() {
   const input = document.getElementById("taskInput");
-  const task = input.value.trim();
-  if (!task || !userId || !currentConvId) return;
+  const typed = input.value.trim();
+  if (!typed || !userId || !currentConvId) return;
   input.value = "";
   document.getElementById("sendBtn").disabled = true;
+
+  let task = typed;
+  if (replyContext) {
+    const quoteLines = replyContext.split("\n").map(l => "> " + l).join("\n");
+    task = `${quoteLines}\n\n${typed}`;
+    clearReplyContext();
+  }
 
   const userMsg = await saveMessage(userId, currentConvId, currentBranchId, "user", task);
   addMessage("user", task, null, userMsg.id);
@@ -1297,7 +1383,7 @@ async function sendTask() {
   // Auto-title the conversation from the first message
   const conv = allConvs.find(c => c.id === currentConvId);
   if (conv && conv.title === "New chat") {
-    const title = task.length > 40 ? task.slice(0, 40) + "…" : task;
+    const title = typed.length > 40 ? typed.slice(0, 40) + "…" : typed;
     conv.title = title;
     renderConvList(allConvs, currentConvId);
     await touchConversation(currentConvId, title);
@@ -1308,6 +1394,62 @@ async function sendTask() {
   await runAndSaveResponse(task);
   document.getElementById("sendBtn").disabled = false;
 }
+
+// ---------------- Reply / quote handling ----------------
+let replyContext = null;
+
+function setReplyContext(text) {
+  replyContext = text;
+  const preview = document.getElementById("replyPreview");
+  const quoteText = document.getElementById("replyQuoteText");
+  quoteText.textContent = text.length > 100 ? text.slice(0, 100) + "…" : text;
+  preview.style.display = "flex";
+  document.getElementById("taskInput").focus();
+}
+
+function clearReplyContext() {
+  replyContext = null;
+  document.getElementById("replyPreview").style.display = "none";
+}
+
+document.getElementById("replyCancelBtn").onclick = clearReplyContext;
+
+// Text-selection based reply popup
+const selectionBtn = document.getElementById("selectionReplyBtn");
+
+function handleSelectionChange() {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+    selectionBtn.style.display = "none";
+    return;
+  }
+  const anchorNode = sel.anchorNode;
+  const bubbleEl = anchorNode && anchorNode.nodeType === 1
+    ? anchorNode.closest(".bubble")
+    : anchorNode && anchorNode.parentElement && anchorNode.parentElement.closest(".bubble");
+  if (!bubbleEl) {
+    selectionBtn.style.display = "none";
+    return;
+  }
+  const range = sel.getRangeAt(0);
+  const rect = range.getBoundingClientRect();
+  selectionBtn.style.display = "block";
+  selectionBtn.style.top = (rect.top - 38 + window.scrollY) + "px";
+  selectionBtn.style.left = Math.max(8, rect.left) + "px";
+  selectionBtn.dataset.selectedText = sel.toString();
+}
+
+document.addEventListener("selectionchange", () => {
+  clearTimeout(window._selDebounce);
+  window._selDebounce = setTimeout(handleSelectionChange, 150);
+});
+
+selectionBtn.onclick = () => {
+  const text = selectionBtn.dataset.selectedText;
+  if (text) setReplyContext(text);
+  selectionBtn.style.display = "none";
+  window.getSelection().removeAllRanges();
+};
 
 async function runAndSaveResponse(task) {
   const thinkingWrap = addMessage("assistant", "");
