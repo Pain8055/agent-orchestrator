@@ -433,17 +433,29 @@
     width: 100%;
     margin: 10px 0;
     font-size: 13px;
+    table-layout: fixed;
   }
   .bubble th, .bubble td {
     border: 1px solid var(--border);
     padding: 6px 10px;
     text-align: left;
+    overflow-wrap: break-word;
+    word-break: normal;
+    hyphens: auto;
+  }
+  .bubble th:first-child, .bubble td:first-child {
+    width: 22%;
   }
   .bubble th {
     background: var(--bg);
     color: var(--accent);
     font-family: var(--mono);
     font-weight: 600;
+  }
+  .bubble td pre {
+    margin: 0;
+    white-space: pre-wrap;
+    font-size: 12px;
   }
 
   .bubble blockquote {
@@ -740,12 +752,16 @@ const TAVILY_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/T
 
 // ---------------- Real viewport height fix (mobile browser chrome bug) ----------------
 function setRealVH() {
-  const vh = window.innerHeight * 0.01;
+  const vh = (window.visualViewport ? window.visualViewport.height : window.innerHeight) * 0.01;
   document.documentElement.style.setProperty('--vh', `${vh}px`);
 }
 setRealVH();
 window.addEventListener('resize', setRealVH);
 window.addEventListener('orientationchange', setRealVH);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', setRealVH);
+  window.visualViewport.addEventListener('scroll', setRealVH);
+}
 
 // ---------------- Sidebar toggle ----------------
 const sidebar = document.getElementById("sidebar");
@@ -1007,12 +1023,24 @@ function formatContent(text) {
 
   function flushAllLists() { closeListsDownTo(-1); }
 
+  function formatTableCell(raw) {
+    // Model sometimes escapes newlines literally as backslash-n inside a table cell
+    // to fit multi-line code into one row. Detect and render it as a code block.
+    const hasLiteralNewline = /\\n/.test(raw);
+    const hasBackticks = /`/.test(raw);
+    if (hasLiteralNewline || hasBackticks) {
+      let code = raw.replace(/\\n/g, "\n").replace(/`+/g, "").trim();
+      return `<pre>${code}</pre>`;
+    }
+    return inlineFormat(raw);
+  }
+
   function flushTable() {
     if (tableRows && tableRows.length) {
       const [header, ...body] = tableRows;
       let html = "<table><thead><tr>" + header.map(c => `<th>${inlineFormat(c)}</th>`).join("") + "</tr></thead>";
       if (body.length) {
-        html += "<tbody>" + body.map(row => "<tr>" + row.map(c => `<td>${inlineFormat(c)}</td>`).join("") + "</tr>").join("") + "</tbody>";
+        html += "<tbody>" + body.map(row => "<tr>" + row.map(c => `<td>${formatTableCell(c)}</td>`).join("") + "</tr>").join("") + "</tbody>";
       }
       html += "</table>";
       blocks.push(html);
