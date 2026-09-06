@@ -292,18 +292,36 @@
     background: none;
     border: none;
     color: var(--text-dim);
-    font-size: 12px;
+    font-size: 13px;
     cursor: pointer;
-    padding: 2px 4px;
-    opacity: 0;
-    transition: opacity 0.15s;
+    padding: 4px 6px;
     display: block;
     margin-left: auto;
     margin-top: 4px;
   }
 
-  .msg.user:hover .edit-btn { opacity: 1; }
-  .edit-btn:hover { color: var(--accent); }
+  .edit-btn:hover, .edit-btn:active { color: var(--accent); }
+
+  .action-row {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
+  }
+
+  .action-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 4px 7px;
+    border-radius: 5px;
+  }
+
+  .action-btn:hover, .action-btn:active {
+    color: var(--accent);
+    background: var(--border);
+  }
 
   .edit-textarea {
     width: 100%;
@@ -958,12 +976,18 @@ function addMessage(role, content, tag = null, msgId = null) {
   if (msgId) wrap.dataset.msgId = msgId;
 
   const editBtn = role === "user" ? `<button class="edit-btn" title="Edit">✎</button>` : "";
+  const actionRow = role === "assistant" ? `
+    <div class="action-row">
+      <button class="action-btn copy-btn" title="Copy">⧉</button>
+      <button class="action-btn regen-btn" title="Regenerate">↻</button>
+    </div>` : "";
 
   wrap.innerHTML = `
     ${tag ? `<div class="msg-tag">${tag}</div>` : ""}
     <div class="version-switcher" style="display:none;"></div>
     <div class="bubble">${formatContent(content)}</div>
     ${editBtn}
+    ${actionRow}
   `;
   log.appendChild(wrap);
   log.scrollTop = log.scrollHeight;
@@ -971,7 +995,56 @@ function addMessage(role, content, tag = null, msgId = null) {
   if (role === "user" && msgId) {
     wrap.querySelector(".edit-btn").onclick = () => startEdit(wrap, msgId, content);
   }
+  if (role === "assistant") {
+    wrap.querySelector(".copy-btn").onclick = () => copyMessage(wrap);
+    wrap.querySelector(".regen-btn").onclick = () => regenerateMessage(wrap, msgId);
+  }
   return wrap;
+}
+
+function copyMessage(wrap) {
+  const text = wrap.querySelector(".bubble").innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = wrap.querySelector(".copy-btn");
+    const original = btn.textContent;
+    btn.textContent = "✓";
+    setTimeout(() => { btn.textContent = original; }, 1200);
+  });
+}
+
+async function regenerateMessage(wrap, msgId) {
+  // Find the user message immediately before this assistant response
+  const idx = messages.findIndex(m => m.id === msgId);
+  let userTask = null;
+  for (let i = idx - 1; i >= 0; i--) {
+    if (messages[i].role === "user") { userTask = messages[i].content; break; }
+  }
+  if (!userTask) {
+    // fallback: look at DOM order if not found in messages array
+    let prev = wrap.previousElementSibling;
+    while (prev && !prev.classList.contains("user")) prev = prev.previousElementSibling;
+    if (prev) userTask = prev.querySelector(".bubble").innerText;
+  }
+  if (!userTask) return;
+
+  const bubble = wrap.querySelector(".bubble");
+  const traceEl = wrap.querySelector(".pipeline") || document.createElement("div");
+  bubble.innerHTML = `<span class="thinking">regenerating</span>`;
+
+  try {
+    let output, role;
+    if (isComplex(userTask)) {
+      const res = await runMultistep(userTask, traceEl);
+      output = res.result; role = res.role;
+    } else {
+      const res = await runSimple(userTask);
+      output = res.result; role = res.role;
+    }
+    bubble.innerHTML = formatContent(output);
+    await saveMessage(userId, currentConvId, currentBranchId, "assistant", output);
+  } catch (err) {
+    bubble.innerHTML = "[Error] " + escapeHtml(String(err));
+  }
 }
 
 function startEdit(wrap, msgId, oldContent) {
