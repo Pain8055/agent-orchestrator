@@ -180,6 +180,14 @@
     gap: 2px;
   }
 
+  .conv-item-wrap {
+    display: flex;
+    align-items: center;
+    position: relative;
+    border-radius: 5px;
+  }
+  .conv-item-wrap:hover { background: var(--border); }
+
   .conv-item {
     font-family: var(--sans);
     font-size: 13px;
@@ -191,13 +199,66 @@
     overflow: hidden;
     text-overflow: ellipsis;
     transition: background 0.15s;
+    flex: 1;
+    min-width: 0;
   }
 
-  .conv-item:hover { background: var(--border); color: var(--text); }
+  .conv-item:hover { color: var(--text); }
 
   .conv-item.active {
     background: var(--accent-dim);
     color: var(--accent);
+  }
+
+  .conv-menu-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 15px;
+    cursor: pointer;
+    padding: 4px 8px;
+    flex-shrink: 0;
+  }
+  .conv-menu-btn:hover { color: var(--accent); }
+
+  .conv-menu {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    z-index: 50;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+    overflow: hidden;
+    min-width: 130px;
+  }
+
+  .conv-menu-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 12.5px;
+    padding: 9px 12px;
+    cursor: pointer;
+  }
+  .conv-menu-item:hover { background: var(--border); }
+  .conv-menu-item.delete-item:hover { background: var(--error); color: #fff; }
+
+  .conv-rename-input {
+    flex: 1;
+    min-width: 0;
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    border-radius: 5px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    padding: 7px 9px;
   }
 
   .hint {
@@ -776,10 +837,6 @@
   <div class="sidebar" id="sidebar">
     <div class="sidebar-title">// agent_team.sys</div>
 
-    <div class="user-box">
-      <input type="text" id="uidInput" placeholder="your-id">
-      <button id="loadBtn">Load / Switch</button>
-    </div>
     <div class="logged-in-as" id="loggedInAs"></div>
 
     <button id="newChatBtn" class="new-chat-btn" style="display:none;">+ New chat</button>
@@ -882,7 +939,6 @@ if (window.innerWidth <= 768) {
 // ---------------- Bind buttons FIRST, before anything risky ----------------
 document.getElementById("gateBtn").onclick = () => connect(document.getElementById("gateInput").value);
 document.getElementById("gateInput").addEventListener("keydown", e => { if (e.key === "Enter") connect(e.target.value); });
-document.getElementById("loadBtn").onclick = () => connect(document.getElementById("uidInput").value);
 
 // ---------------- Defensive error handling ----------------
 function showError(msg) {
@@ -1469,11 +1525,111 @@ function renderConvList(convs, activeId) {
   list.innerHTML = "";
   convs.forEach(c => {
     const item = document.createElement("div");
-    item.className = "conv-item" + (c.id === activeId ? " active" : "");
-    item.textContent = c.title;
-    item.onclick = () => openConversation(c);
+    item.className = "conv-item-wrap";
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "conv-item" + (c.id === activeId ? " active" : "");
+    titleEl.textContent = c.title;
+    titleEl.onclick = () => openConversation(c);
+
+    const menuBtn = document.createElement("button");
+    menuBtn.className = "conv-menu-btn";
+    menuBtn.textContent = "⋮";
+    menuBtn.onclick = (e) => { e.stopPropagation(); openConvMenu(c, item); };
+
+    // Long-press support (touch)
+    let pressTimer = null;
+    titleEl.addEventListener("touchstart", () => {
+      pressTimer = setTimeout(() => openConvMenu(c, item), 500);
+    });
+    titleEl.addEventListener("touchend", () => clearTimeout(pressTimer));
+    titleEl.addEventListener("touchmove", () => clearTimeout(pressTimer));
+
+    item.appendChild(titleEl);
+    item.appendChild(menuBtn);
     list.appendChild(item);
   });
+}
+
+function closeConvMenu() {
+  const existing = document.querySelector(".conv-menu");
+  if (existing) existing.remove();
+}
+
+function openConvMenu(conv, anchorEl) {
+  closeConvMenu();
+  const menu = document.createElement("div");
+  menu.className = "conv-menu";
+  menu.innerHTML = `
+    <button class="conv-menu-item rename-item">✎ Rename</button>
+    <button class="conv-menu-item delete-item">🗑 Delete</button>
+  `;
+  anchorEl.appendChild(menu);
+
+  menu.querySelector(".rename-item").onclick = (e) => {
+    e.stopPropagation();
+    closeConvMenu();
+    startRenameConversation(conv, anchorEl);
+  };
+  menu.querySelector(".delete-item").onclick = (e) => {
+    e.stopPropagation();
+    closeConvMenu();
+    confirmDeleteConversation(conv);
+  };
+
+  setTimeout(() => {
+    document.addEventListener("click", closeConvMenu, { once: true });
+  }, 0);
+}
+
+function startRenameConversation(conv, anchorEl) {
+  const titleEl = anchorEl.querySelector(".conv-item");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "conv-rename-input";
+  input.value = conv.title;
+  titleEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  const commit = async () => {
+    const newTitle = input.value.trim() || conv.title;
+    conv.title = newTitle;
+    await sb.from("conversations").update({ title: newTitle }).eq("id", conv.id);
+    renderConvList(allConvs, currentConvId);
+  };
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") input.blur();
+    if (e.key === "Escape") { renderConvList(allConvs, currentConvId); }
+  });
+  input.addEventListener("blur", commit);
+}
+
+async function confirmDeleteConversation(conv) {
+  if (!confirm(`Delete "${conv.title}"? This can't be undone.`)) return;
+
+  await sb.from("chat_history").delete().eq("conversation_id", conv.id);
+  await sb.from("branches").delete().eq("conversation_id", conv.id);
+  await sb.from("conversations").delete().eq("id", conv.id);
+
+  allConvs = allConvs.filter(c => c.id !== conv.id);
+
+  if (currentConvId === conv.id) {
+    if (allConvs.length) {
+      await openConversation(allConvs[0]);
+    } else {
+      const newConv = await createConversation(userId, "New chat");
+      allConvs = [newConv];
+      currentConvId = newConv.id;
+      currentBranchId = newConv.active_branch_id;
+      document.getElementById("log").innerHTML = "";
+      messages = [];
+      renderConvList(allConvs, currentConvId);
+    }
+  } else {
+    renderConvList(allConvs, currentConvId);
+  }
 }
 
 let allConvs = [];
@@ -1536,11 +1692,6 @@ async function connect(uid) {
 }
 
 document.getElementById("newChatBtn").onclick = startNewChat;
-
-document.getElementById("gateBtn").onclick = () => connect(document.getElementById("gateInput").value);
-document.getElementById("gateInput").addEventListener("keydown", e => { if (e.key === "Enter") connect(e.target.value); });
-
-document.getElementById("loadBtn").onclick = () => connect(document.getElementById("uidInput").value);
 
 // ---------------- File attachments ----------------
 let attachedFiles = []; // {name, kind: 'text'|'image', content|dataUrl}
