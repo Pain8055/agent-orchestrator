@@ -930,12 +930,7 @@ let currentConvId = null;
 let messages = [];
 
 // ---------------- API calls ----------------
-async function callAgent(role, prompt, maxTokens = null) {
-  const agent = AGENTS[role];
-  if (maxTokens === null) {
-    maxTokens = (role === "code" || role === "debug" || role === "reasoning") ? 3000 : 1200;
-  }
-  const endpoint = agent.provider === "openrouter" ? OPENROUTER_ENDPOINT : GROQ_ENDPOINT;
+async function callAgentRaw(endpoint, agent, prompt, maxTokens) {
   const res = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -947,8 +942,46 @@ async function callAgent(role, prompt, maxTokens = null) {
     })
   });
   const data = await res.json();
-  if (!res.ok) return `[Error] ${JSON.stringify(data)}`;
-  return cleanThinking(data.content || "");
+  return { ok: res.ok, data };
+}
+
+function parseRetryDelaySeconds(errorJson) {
+  try {
+    const msg = errorJson.error?.error?.message || "";
+    const match = msg.match(/try again in ([\d.]+)s/i);
+    if (match) return Math.min(parseFloat(match[1]) + 0.5, 30); // small buffer, cap at 30s
+  } catch (e) {}
+  return 5; // sensible default if we can't parse it
+}
+
+function isRateLimitError(errorJson) {
+  try {
+    return errorJson.error?.error?.code === "rate_limit_exceeded";
+  } catch (e) {
+    return false;
+  }
+}
+
+async function callAgent(role, prompt, maxTokens = null) {
+  const agent = AGENTS[role];
+  if (maxTokens === null) {
+    maxTokens = (role === "code" || role === "debug" || role === "reasoning") ? 3000 : 1200;
+  }
+  const endpoint = agent.provider === "openrouter" ? OPENROUTER_ENDPOINT : GROQ_ENDPOINT;
+
+  let attempt = 0;
+  while (attempt < 3) {
+    const { ok, data } = await callAgentRaw(endpoint, agent, prompt, maxTokens);
+    if (ok) return cleanThinking(data.content || "");
+
+    if (isRateLimitError(data) && attempt < 2) {
+      const waitSeconds = parseRetryDelaySeconds(data);
+      await new Promise(r => setTimeout(r, waitSeconds * 1000));
+      attempt++;
+      continue;
+    }
+    return `[Error] ${JSON.stringify(data)}`;
+  }
 }
 
 function cleanThinking(text) {
