@@ -475,6 +475,33 @@
     display: block;
   }
 
+  .file-attach {
+    margin: 8px 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+  }
+  .file-attach summary {
+    cursor: pointer;
+    padding: 8px 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    list-style: none;
+  }
+  .file-attach summary::-webkit-details-marker { display: none; }
+  .file-attach summary::before { content: "▸ "; }
+  .file-attach[open] summary::before { content: "▾ "; }
+  .file-attach .file-size { color: var(--text-dim); font-weight: normal; }
+  .file-attach pre {
+    margin: 0;
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
   .bubble code {
     font-family: var(--mono);
     background: var(--bg);
@@ -1048,7 +1075,16 @@ function escapeHtml(s) {
 }
 
 function formatContent(text) {
-  const escaped = escapeHtml(text);
+  // Extract [[file:name]]content[[/file]] markers BEFORE escaping, so we can
+  // render them as a collapsible block with their own controlled escaping.
+  const filePlaceholders = [];
+  const preProcessed = text.replace(/\[\[file:([^\]]+)\]\]([\s\S]*?)\[\[\/file\]\]/g, (match, name, content) => {
+    const idx = filePlaceholders.length;
+    filePlaceholders.push({ name, content });
+    return `\u0000FILEBLOCK${idx}\u0000`;
+  });
+
+  const escaped = escapeHtml(preProcessed);
   const lines = escaped.split("\n");
   let blocks = []; // sequence of rendered HTML strings, in order
   let inCodeBlock = false;
@@ -1224,7 +1260,17 @@ function formatContent(text) {
   flushPara(); flushAllLists(); flushTable();
   if (inCodeBlock && codeBuffer.length) blocks.push(`<pre>${codeBuffer.join("\n")}</pre>`);
 
-  return blocks.join("");
+  let result = blocks.join("");
+
+  // Restore file blocks as collapsible details, escaping their content independently
+  filePlaceholders.forEach((f, idx) => {
+    const placeholder = `\u0000FILEBLOCK${idx}\u0000`;
+    const sizeLabel = f.content.length > 999 ? `${(f.content.length / 1000).toFixed(1)}k chars` : `${f.content.length} chars`;
+    const detailsHtml = `<details class="file-attach"><summary>📄 ${escapeHtml(f.name)} <span class="file-size">(${sizeLabel})</span></summary><pre>${escapeHtml(f.content)}</pre></details>`;
+    result = result.split(placeholder).join(detailsHtml);
+  });
+
+  return result;
 }
 
 function addMessage(role, content, tag = null, msgId = null) {
@@ -1564,10 +1610,17 @@ async function sendTask() {
     clearReplyContext();
   }
 
-  // Append text-file content as context blocks
+  // Append text-file content as context blocks (truncated to stay under model token limits)
+  const MAX_FILE_CHARS = 6000;
   const textAttachments = attachedFiles.filter(f => f.kind === "text");
   for (const f of textAttachments) {
-    task += `\n\n📄 Attached file: ${f.name}\n\`\`\`\n${f.content}\n\`\`\``;
+    let content = f.content;
+    let truncated = false;
+    if (content.length > MAX_FILE_CHARS) {
+      content = content.slice(0, MAX_FILE_CHARS);
+      truncated = true;
+    }
+    task += `\n\n[[file:${f.name}${truncated ? " (truncated)" : ""}]]${content}[[/file]]`;
   }
 
   // Append images as markdown image syntax (for display + later vision routing)
