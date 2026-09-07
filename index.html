@@ -921,6 +921,7 @@ const AGENTS = {
   writing:   { provider: "groq", model: "openai/gpt-oss-120b", system: "You are a professional writing assistant. Write clear, well-structured, natural text for the requested purpose." },
   design:    { provider: "groq", model: "openai/gpt-oss-120b", system: "You are a UI/UX design specialist. Give concrete, specific design decisions (colors, layout, spacing, typography) — never vague advice." },
   review:    { provider: "groq", model: "openai/gpt-oss-120b", system: "You are a strict quality reviewer. Given a task and a draft answer, find any mistakes, gaps, or weaknesses. If it's good, say so briefly. If not, give the corrected version." },
+  vision:    { provider: "openrouter", model: "openrouter/free", system: "You are a vision assistant. Describe and analyze the attached image(s) clearly and answer the user's question about them." },
 };
 
 const AGENT_LABELS = ["head","code","debug","reasoning","writing","design","search","review"];
@@ -930,16 +931,18 @@ let currentConvId = null;
 let messages = [];
 
 // ---------------- API calls ----------------
-async function callAgentRaw(endpoint, agent, prompt, maxTokens) {
+async function callAgentRaw(endpoint, agent, prompt, maxTokens, images) {
+  const body = {
+    model: agent.model,
+    system: agent.system,
+    prompt: prompt,
+    max_tokens: maxTokens
+  };
+  if (images && images.length) body.images = images;
   const res = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: agent.model,
-      system: agent.system,
-      prompt: prompt,
-      max_tokens: maxTokens
-    })
+    body: JSON.stringify(body)
   });
   const data = await res.json();
   return { ok: res.ok, data };
@@ -962,7 +965,7 @@ function isRateLimitError(errorJson) {
   }
 }
 
-async function callAgent(role, prompt, maxTokens = null) {
+async function callAgent(role, prompt, maxTokens = null, images = null) {
   const agent = AGENTS[role];
   if (maxTokens === null) {
     maxTokens = (role === "code" || role === "debug" || role === "reasoning") ? 3000 : 1200;
@@ -971,7 +974,7 @@ async function callAgent(role, prompt, maxTokens = null) {
 
   let attempt = 0;
   while (attempt < 3) {
-    const { ok, data } = await callAgentRaw(endpoint, agent, prompt, maxTokens);
+    const { ok, data } = await callAgentRaw(endpoint, agent, prompt, maxTokens, images);
     if (ok) return cleanThinking(data.content || "");
 
     if (isRateLimitError(data) && attempt < 2) {
@@ -1656,8 +1659,9 @@ async function sendTask() {
     task += `\n\n[[file:${f.name}${truncated ? " (truncated)" : ""}]]${content}[[/file]]`;
   }
 
-  // Append images as markdown image syntax (for display + later vision routing)
+  // Append images as markdown image syntax (for display) and capture raw data for vision routing
   const imageAttachments = attachedFiles.filter(f => f.kind === "image");
+  const imageDataUrls = imageAttachments.map(f => f.dataUrl);
   for (const f of imageAttachments) {
     task += `\n\n![${f.name}](${f.dataUrl})`;
   }
@@ -1680,7 +1684,7 @@ async function sendTask() {
     await touchConversation(currentConvId);
   }
 
-  await runAndSaveResponse(task);
+  await runAndSaveResponse(task, imageDataUrls.length ? { images: imageDataUrls, question: typed } : null);
   document.getElementById("sendBtn").disabled = false;
 }
 
@@ -1740,7 +1744,7 @@ selectionBtn.onclick = () => {
   window.getSelection().removeAllRanges();
 };
 
-async function runAndSaveResponse(task) {
+async function runAndSaveResponse(task, visionData = null) {
   const thinkingWrap = addMessage("assistant", "");
   const bubble = thinkingWrap.querySelector(".bubble");
   const traceEl = document.createElement("div");
@@ -1750,7 +1754,10 @@ async function runAndSaveResponse(task) {
 
   try {
     let output, role;
-    if (isComplex(task)) {
+    if (visionData) {
+      role = "vision";
+      output = await callAgent("vision", visionData.question || "Describe this image in detail.", 1200, visionData.images);
+    } else if (isComplex(task)) {
       const res = await runMultistep(task, traceEl);
       output = res.result; role = res.role;
     } else {
