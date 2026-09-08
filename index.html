@@ -121,52 +121,111 @@
 
   .hamburger:hover { border-color: var(--accent); color: var(--accent); }
 
-  .sidebar-title {
+  .sidebar-header {
     font-family: var(--mono);
-    font-size: 13px;
-    letter-spacing: 0.08em;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    margin-bottom: 16px;
-  }
-
-  .user-box {
-    margin-bottom: 24px;
-  }
-
-  .user-box input {
-    width: 100%;
-    background: var(--bg);
-    border: 1px solid var(--border);
+    font-size: 22px;
+    font-weight: 700;
     color: var(--text);
-    font-family: var(--mono);
-    font-size: 13px;
-    padding: 8px 10px;
-    border-radius: 4px;
-    margin-bottom: 8px;
-  }
-
-  .user-box button {
-    width: 100%;
-    background: var(--accent-dim);
-    border: 1px solid var(--accent);
-    color: var(--accent);
-    font-family: var(--mono);
-    font-size: 12px;
-    padding: 8px;
-    border-radius: 4px;
-    cursor: pointer;
-    letter-spacing: 0.05em;
-  }
-
-  .user-box button:hover { background: var(--accent); color: var(--bg); }
-
-  .logged-in-as {
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--text-dim);
     margin-bottom: 20px;
-    word-break: break-all;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sidebar-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding-top: 14px;
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .footer-profile {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .footer-avatar {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--bg);
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .footer-username {
+    font-family: var(--sans);
+    font-size: 13px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .gear-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    font-size: 15px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .gear-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+  .hint-popup-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .hint-popup {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    max-width: 320px;
+    width: 90%;
+  }
+
+  .hint-popup-title {
+    font-family: var(--mono);
+    font-size: 14px;
+    color: var(--accent);
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+
+  .hint-popup-close {
+    margin-top: 16px;
+    width: 100%;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    font-family: var(--mono);
+    font-weight: 600;
+    padding: 9px;
+    border-radius: 6px;
+    cursor: pointer;
   }
 
   .new-chat-btn {
@@ -277,11 +336,9 @@
 
   .hint {
     font-family: var(--mono);
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-dim);
-    line-height: 1.6;
-    padding-top: 16px;
-    border-top: 1px solid var(--border);
+    line-height: 1.7;
   }
 
   .hint code {
@@ -850,18 +907,18 @@
 <div class="app">
   <div class="overlay" id="overlay"></div>
   <div class="sidebar" id="sidebar">
-    <div class="sidebar-title">// agent_team.sys</div>
-
-    <div class="logged-in-as" id="loggedInAs"></div>
+    <div class="sidebar-header" id="sidebarHeader">// agent_team.sys</div>
 
     <button id="newChatBtn" class="new-chat-btn" style="display:none;">+ New chat</button>
 
     <div class="conv-list" id="convList"></div>
 
-    <div class="hint">
-      Force an agent: <code>code:</code> <code>debug:</code> <code>math:</code><br>
-      <code>writing:</code> <code>design:</code> <code>search:</code> <code>review:</code><br>
-      Force multi-step: <code>plan:</code>
+    <div class="sidebar-footer" id="sidebarFooter" style="display:none;">
+      <div class="footer-profile">
+        <div class="footer-avatar" id="footerAvatar"></div>
+        <span class="footer-username" id="footerUsername"></span>
+      </div>
+      <button class="gear-btn" id="gearBtn" title="Agent commands">⚙</button>
     </div>
   </div>
 
@@ -908,6 +965,18 @@
 </div>
 
 <button class="selection-reply-btn" id="selectionReplyBtn" style="display:none;">↩ Reply</button>
+
+<div class="hint-popup-overlay" id="hintPopupOverlay" style="display:none;">
+  <div class="hint-popup">
+    <div class="hint-popup-title">Agent commands</div>
+    <div class="hint">
+      Force an agent: <code>code:</code> <code>debug:</code> <code>math:</code><br>
+      <code>writing:</code> <code>design:</code> <code>search:</code> <code>review:</code><br>
+      Force multi-step: <code>plan:</code>
+    </div>
+    <button class="hint-popup-close" id="hintPopupClose">Close</button>
+  </div>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
@@ -1726,7 +1795,10 @@ async function connect(uid) {
     document.getElementById("gateView").style.display = "none";
     document.getElementById("chatView").style.display = "flex";
     document.getElementById("sessionUser").textContent = userId;
-    document.getElementById("loggedInAs").textContent = "user: " + userId;
+    document.getElementById("sidebarHeader").textContent = userId;
+    document.getElementById("footerAvatar").textContent = userId.charAt(0).toUpperCase();
+    document.getElementById("footerUsername").textContent = userId;
+    document.getElementById("sidebarFooter").style.display = "flex";
     document.getElementById("newChatBtn").style.display = "block";
     document.getElementById("topbarMenuBtn").style.display = "block";
 
@@ -1743,6 +1815,18 @@ async function connect(uid) {
 }
 
 document.getElementById("newChatBtn").onclick = startNewChat;
+
+document.getElementById("gearBtn").onclick = () => {
+  document.getElementById("hintPopupOverlay").style.display = "flex";
+};
+document.getElementById("hintPopupClose").onclick = () => {
+  document.getElementById("hintPopupOverlay").style.display = "none";
+};
+document.getElementById("hintPopupOverlay").onclick = (e) => {
+  if (e.target.id === "hintPopupOverlay") {
+    document.getElementById("hintPopupOverlay").style.display = "none";
+  }
+};
 
 document.getElementById("topbarMenuBtn").onclick = (e) => {
   e.stopPropagation();
