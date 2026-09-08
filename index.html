@@ -856,7 +856,10 @@
         <button class="hamburger" id="hamburgerBtn">☰</button>
         <span>SESSION</span>
       </div>
-      <strong id="sessionUser">not connected</strong>
+      <div style="display:flex; align-items:center; gap:10px; position:relative;">
+        <strong id="sessionUser">not connected</strong>
+        <button class="conv-menu-btn" id="topbarMenuBtn" style="display:none;" title="Conversation options">⋮</button>
+      </div>
     </div>
 
     <div id="gateView" class="gate">
@@ -1710,6 +1713,7 @@ async function connect(uid) {
     document.getElementById("sessionUser").textContent = userId;
     document.getElementById("loggedInAs").textContent = "user: " + userId;
     document.getElementById("newChatBtn").style.display = "block";
+    document.getElementById("topbarMenuBtn").style.display = "block";
 
     allConvs = await loadConversations(userId);
     if (allConvs.length === 0) {
@@ -1724,6 +1728,52 @@ async function connect(uid) {
 }
 
 document.getElementById("newChatBtn").onclick = startNewChat;
+
+document.getElementById("topbarMenuBtn").onclick = (e) => {
+  e.stopPropagation();
+  const conv = allConvs.find(c => c.id === currentConvId);
+  if (!conv) return;
+  openTopbarMenu(conv);
+};
+
+function openTopbarMenu(conv) {
+  closeConvMenu();
+  const anchor = document.getElementById("topbarMenuBtn").parentElement;
+  const menu = document.createElement("div");
+  menu.className = "conv-menu";
+  menu.style.top = "calc(100% + 6px)";
+  menu.innerHTML = `
+    <button class="conv-menu-item pin-item">${conv.pinned ? "📌 Unpin" : "📌 Pin"}</button>
+    <button class="conv-menu-item rename-item">✎ Rename</button>
+    <button class="conv-menu-item delete-item">🗑 Delete</button>
+  `;
+  anchor.appendChild(menu);
+
+  menu.querySelector(".pin-item").onclick = async (e) => {
+    e.stopPropagation();
+    closeConvMenu();
+    await togglePinConversation(conv);
+  };
+  menu.querySelector(".rename-item").onclick = async (e) => {
+    e.stopPropagation();
+    closeConvMenu();
+    const newTitle = prompt("Rename conversation:", conv.title);
+    if (newTitle && newTitle.trim()) {
+      conv.title = newTitle.trim();
+      await sb.from("conversations").update({ title: conv.title }).eq("id", conv.id);
+      renderConvList(allConvs, currentConvId);
+    }
+  };
+  menu.querySelector(".delete-item").onclick = (e) => {
+    e.stopPropagation();
+    closeConvMenu();
+    confirmDeleteConversation(conv);
+  };
+
+  setTimeout(() => {
+    document.addEventListener("click", closeConvMenu, { once: true });
+  }, 0);
+}
 
 // ---------------- File attachments ----------------
 let attachedFiles = []; // {name, kind: 'text'|'image', content|dataUrl}
