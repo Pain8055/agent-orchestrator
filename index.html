@@ -1465,7 +1465,9 @@ function startEdit(wrap, msgId, oldContent) {
 
 // ---------------- Conversation persistence ----------------
 async function loadConversations(uid) {
-  const { data } = await sb.from("conversations").select("*").eq("user_id", uid).order("updated_at", { ascending: false });
+  const { data } = await sb.from("conversations").select("*").eq("user_id", uid)
+    .order("pinned", { ascending: false })
+    .order("updated_at", { ascending: false });
   return data || [];
 }
 
@@ -1529,7 +1531,7 @@ function renderConvList(convs, activeId) {
 
     const titleEl = document.createElement("div");
     titleEl.className = "conv-item" + (c.id === activeId ? " active" : "");
-    titleEl.textContent = c.title;
+    titleEl.textContent = (c.pinned ? "📌 " : "") + c.title;
     titleEl.onclick = () => openConversation(c);
 
     const menuBtn = document.createElement("button");
@@ -1561,11 +1563,17 @@ function openConvMenu(conv, anchorEl) {
   const menu = document.createElement("div");
   menu.className = "conv-menu";
   menu.innerHTML = `
+    <button class="conv-menu-item pin-item">${conv.pinned ? "📌 Unpin" : "📌 Pin"}</button>
     <button class="conv-menu-item rename-item">✎ Rename</button>
     <button class="conv-menu-item delete-item">🗑 Delete</button>
   `;
   anchorEl.appendChild(menu);
 
+  menu.querySelector(".pin-item").onclick = async (e) => {
+    e.stopPropagation();
+    closeConvMenu();
+    await togglePinConversation(conv);
+  };
   menu.querySelector(".rename-item").onclick = (e) => {
     e.stopPropagation();
     closeConvMenu();
@@ -1580,6 +1588,16 @@ function openConvMenu(conv, anchorEl) {
   setTimeout(() => {
     document.addEventListener("click", closeConvMenu, { once: true });
   }, 0);
+}
+
+async function togglePinConversation(conv) {
+  conv.pinned = !conv.pinned;
+  await sb.from("conversations").update({ pinned: conv.pinned }).eq("id", conv.id);
+  allConvs.sort((a, b) => {
+    if (a.pinned !== b.pinned) return b.pinned - a.pinned;
+    return new Date(b.updated_at) - new Date(a.updated_at);
+  });
+  renderConvList(allConvs, currentConvId);
 }
 
 function startRenameConversation(conv, anchorEl) {
