@@ -1592,7 +1592,12 @@ function openConvMenu(conv, anchorEl) {
 
 async function togglePinConversation(conv) {
   conv.pinned = !conv.pinned;
-  await sb.from("conversations").update({ pinned: conv.pinned }).eq("id", conv.id);
+  const { error } = await sb.from("conversations").update({ pinned: conv.pinned }).eq("id", conv.id);
+  if (error) {
+    showError("Pin update failed: " + error.message);
+    conv.pinned = !conv.pinned; // revert local state since DB update failed
+    return;
+  }
   allConvs.sort((a, b) => {
     if (a.pinned !== b.pinned) return b.pinned - a.pinned;
     return new Date(b.updated_at) - new Date(a.updated_at);
@@ -1627,9 +1632,18 @@ function startRenameConversation(conv, anchorEl) {
 async function confirmDeleteConversation(conv) {
   if (!confirm(`Delete "${conv.title}"? This can't be undone.`)) return;
 
-  await sb.from("chat_history").delete().eq("conversation_id", conv.id);
-  await sb.from("branches").delete().eq("conversation_id", conv.id);
-  await sb.from("conversations").delete().eq("id", conv.id);
+  // Break the circular reference (conversations.active_branch_id -> branches) before deleting branches
+  const step1 = await sb.from("conversations").update({ active_branch_id: null }).eq("id", conv.id);
+  if (step1.error) { showError("Delete failed (step 1): " + step1.error.message); return; }
+
+  const step2 = await sb.from("chat_history").delete().eq("conversation_id", conv.id);
+  if (step2.error) { showError("Delete failed (step 2): " + step2.error.message); return; }
+
+  const step3 = await sb.from("branches").delete().eq("conversation_id", conv.id);
+  if (step3.error) { showError("Delete failed (step 3): " + step3.error.message); return; }
+
+  const step4 = await sb.from("conversations").delete().eq("id", conv.id);
+  if (step4.error) { showError("Delete failed (step 4): " + step4.error.message); return; }
 
   allConvs = allConvs.filter(c => c.id !== conv.id);
 
