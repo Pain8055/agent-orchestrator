@@ -161,9 +161,15 @@
   .footer-profile {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     min-width: 0;
+    background: none;
+    border: none;
+    padding: 4px;
+    border-radius: 8px;
+    cursor: pointer;
   }
+  .footer-profile:hover { background: var(--border); }
 
   .footer-avatar {
     width: 30px;
@@ -190,18 +196,20 @@
     min-width: 0;
   }
 
-  .gear-btn {
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--text-dim);
-    width: 32px;
-    height: 32px;
-    border-radius: 6px;
-    font-size: 15px;
+  .new-chat-btn-footer {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 13px;
+    padding: 8px 14px;
+    border-radius: 20px;
     cursor: pointer;
     flex-shrink: 0;
+    white-space: nowrap;
   }
-  .gear-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .new-chat-btn-footer:hover { opacity: 0.88; }
 
   .hint-popup-overlay {
     position: fixed;
@@ -337,23 +345,6 @@
     text-align: center;
     padding: 30px 10px;
   }
-
-  .new-chat-btn {
-    width: 100%;
-    background: var(--accent);
-    color: var(--bg);
-    border: none;
-    font-family: var(--mono);
-    font-weight: 600;
-    font-size: 12px;
-    padding: 9px;
-    border-radius: 6px;
-    cursor: pointer;
-    margin-bottom: 14px;
-    letter-spacing: 0.03em;
-  }
-
-  .new-chat-btn:hover { opacity: 0.85; }
 
   .nav-item-btn {
     width: 100%;
@@ -1088,8 +1079,6 @@
   <div class="sidebar" id="sidebar">
     <div class="sidebar-header" id="sidebarHeader">// agent_team.sys</div>
 
-    <button id="newChatBtn" class="new-chat-btn" style="display:none;">+ New chat</button>
-
     <button id="allArtifactsBtn" class="nav-item-btn" style="display:none;">🗂 Artifacts</button>
 
     <button id="projectsBtn" class="nav-item-btn" style="display:none;" disabled>📁 Projects <span class="soon-tag">soon</span></button>
@@ -1100,11 +1089,11 @@
     <div class="conv-list" id="convList"></div>
 
     <div class="sidebar-footer" id="sidebarFooter" style="display:none;">
-      <div class="footer-profile">
+      <button class="footer-profile" id="footerProfileBtn" title="Settings">
         <div class="footer-avatar" id="footerAvatar"></div>
         <span class="footer-username" id="footerUsername"></span>
-      </div>
-      <button class="gear-btn" id="gearBtn" title="Agent commands">⚙</button>
+      </button>
+      <button id="newChatBtn" class="new-chat-btn-footer" style="display:none;">+ New chat</button>
     </div>
   </div>
 
@@ -2143,7 +2132,7 @@ document.getElementById("artifactsOverlay").onclick = (e) => {
 };
 document.getElementById("allArtifactsBtn").onclick = openAllArtifacts;
 
-document.getElementById("gearBtn").onclick = () => {
+document.getElementById("footerProfileBtn").onclick = () => {
   document.getElementById("hintPopupOverlay").style.display = "flex";
 };
 document.getElementById("hintPopupClose").onclick = () => {
