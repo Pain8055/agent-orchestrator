@@ -261,6 +261,56 @@
     justify-content: center;
   }
 
+  .chats-page {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 250;
+    display: flex;
+    flex-direction: column;
+    padding: 16px 20px 20px;
+    overflow: hidden;
+  }
+
+  .chats-page-topbar {
+    margin-bottom: 16px;
+  }
+
+  .chats-page-title {
+    font-family: var(--sans);
+    font-size: 30px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 16px;
+  }
+
+  .chats-page-list {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .new-chat-fab {
+    position: fixed;
+    bottom: 24px;
+    right: 20px;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 14px;
+    padding: 12px 20px;
+    border-radius: 30px;
+    cursor: pointer;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+    z-index: 260;
+  }
+  .new-chat-fab:hover { opacity: 0.9; }
+
   .artifacts-panel {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -1079,13 +1129,12 @@
   <div class="sidebar" id="sidebar">
     <div class="sidebar-header" id="sidebarHeader">// agent_team.sys</div>
 
+    <button id="openChatsPageBtn" class="nav-item-btn" style="display:none;">💬 Chats</button>
+
     <button id="allArtifactsBtn" class="nav-item-btn" style="display:none;">🗂 Artifacts</button>
 
     <button id="projectsBtn" class="nav-item-btn" style="display:none;" disabled>📁 Projects <span class="soon-tag">soon</span></button>
 
-    <div class="conv-search-wrap">
-      <input type="text" id="convSearchInput" class="conv-search-input" placeholder="Search chats...">
-    </div>
     <div class="conv-list" id="convList"></div>
 
     <div class="sidebar-footer" id="sidebarFooter" style="display:none;">
@@ -1153,6 +1202,18 @@
     </div>
     <button class="hint-popup-close" id="hintPopupClose">Close</button>
   </div>
+</div>
+
+<div class="chats-page" id="chatsPageView" style="display:none;">
+  <div class="chats-page-topbar">
+    <button class="hamburger" id="chatsPageBackBtn">☰</button>
+  </div>
+  <div class="chats-page-title">Chats</div>
+  <div class="conv-search-wrap">
+    <input type="text" id="chatsPageSearch" class="conv-search-input" placeholder="Search">
+  </div>
+  <div class="chats-page-list" id="chatsPageList"></div>
+  <button class="new-chat-fab" id="chatsPageNewChatBtn">+ New chat</button>
 </div>
 
 <div class="artifacts-overlay" id="artifactsOverlay" style="display:none;">
@@ -1811,46 +1872,77 @@ function formatRelativeDate(dateStr) {
   return date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
+function buildConvItemElement(c, activeId, onSelect) {
+  const item = document.createElement("div");
+  item.className = "conv-item-wrap";
+
+  const titleEl = document.createElement("div");
+  titleEl.className = "conv-item" + (c.id === activeId ? " active" : "");
+  titleEl.innerHTML = `
+    <div class="conv-item-title">${(c.pinned ? "📌 " : "") + escapeHtml(c.title)}</div>
+    <div class="conv-item-date">${formatRelativeDate(c.updated_at)}</div>
+  `;
+  titleEl.onclick = () => onSelect(c);
+
+  const menuBtn = document.createElement("button");
+  menuBtn.className = "conv-menu-btn";
+  menuBtn.textContent = "⋮";
+  menuBtn.onclick = (e) => { e.stopPropagation(); openConvMenu(c, item); };
+
+  let pressTimer = null;
+  titleEl.addEventListener("touchstart", () => {
+    pressTimer = setTimeout(() => openConvMenu(c, item), 500);
+  });
+  titleEl.addEventListener("touchend", () => clearTimeout(pressTimer));
+  titleEl.addEventListener("touchmove", () => clearTimeout(pressTimer));
+
+  item.appendChild(titleEl);
+  item.appendChild(menuBtn);
+  return item;
+}
+
 function renderConvList(convs, activeId) {
   const list = document.getElementById("convList");
   list.innerHTML = "";
   convs.forEach(c => {
-    const item = document.createElement("div");
-    item.className = "conv-item-wrap";
-
-    const titleEl = document.createElement("div");
-    titleEl.className = "conv-item" + (c.id === activeId ? " active" : "");
-    titleEl.innerHTML = `
-      <div class="conv-item-title">${(c.pinned ? "📌 " : "") + escapeHtml(c.title)}</div>
-      <div class="conv-item-date">${formatRelativeDate(c.updated_at)}</div>
-    `;
-    titleEl.onclick = () => openConversation(c);
-
-    const menuBtn = document.createElement("button");
-    menuBtn.className = "conv-menu-btn";
-    menuBtn.textContent = "⋮";
-    menuBtn.onclick = (e) => { e.stopPropagation(); openConvMenu(c, item); };
-
-    // Long-press support (touch)
-    let pressTimer = null;
-    titleEl.addEventListener("touchstart", () => {
-      pressTimer = setTimeout(() => openConvMenu(c, item), 500);
-    });
-    titleEl.addEventListener("touchend", () => clearTimeout(pressTimer));
-    titleEl.addEventListener("touchmove", () => clearTimeout(pressTimer));
-
-    item.appendChild(titleEl);
-    item.appendChild(menuBtn);
-    list.appendChild(item);
+    list.appendChild(buildConvItemElement(c, activeId, openConversation));
   });
 }
 
-document.getElementById("convSearchInput").addEventListener("input", (e) => {
+function renderChatsPageList(convs, activeId) {
+  const list = document.getElementById("chatsPageList");
+  list.innerHTML = "";
+  convs.forEach(c => {
+    list.appendChild(buildConvItemElement(c, activeId, (conv) => {
+      closeChatsPage();
+      openConversation(conv);
+    }));
+  });
+}
+
+function openChatsPage() {
+  document.getElementById("chatsPageSearch").value = "";
+  renderChatsPageList(allConvs, currentConvId);
+  document.getElementById("chatsPageView").style.display = "flex";
+}
+
+function closeChatsPage() {
+  document.getElementById("chatsPageView").style.display = "none";
+}
+
+document.getElementById("openChatsPageBtn").onclick = openChatsPage;
+document.getElementById("chatsPageBackBtn").onclick = closeChatsPage;
+document.getElementById("chatsPageNewChatBtn").onclick = () => {
+  closeChatsPage();
+  startNewChat();
+};
+
+document.getElementById("chatsPageSearch").addEventListener("input", (e) => {
   const query = e.target.value.trim().toLowerCase();
   const filtered = query
     ? allConvs.filter(c => c.title.toLowerCase().includes(query))
     : allConvs;
-  renderConvList(filtered, currentConvId);
+  renderChatsPageList(filtered, currentConvId);
 });
 
 function closeConvMenu() {
@@ -2016,6 +2108,7 @@ async function connect(uid) {
     document.getElementById("topbarMenuBtn").style.display = "block";
     document.getElementById("topbarArtifactsBtn").style.display = "flex";
     document.getElementById("topbarNewChatBtn").style.display = "flex";
+    document.getElementById("openChatsPageBtn").style.display = "block";
     document.getElementById("allArtifactsBtn").style.display = "block";
     document.getElementById("projectsBtn").style.display = "flex";
 
