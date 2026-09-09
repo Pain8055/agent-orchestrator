@@ -2005,6 +2005,7 @@ async function connect(uid) {
     document.getElementById("topbarMenuBtn").style.display = "block";
     document.getElementById("topbarArtifactsBtn").style.display = "flex";
     document.getElementById("topbarNewChatBtn").style.display = "flex";
+    document.getElementById("allArtifactsBtn").style.display = "block";
 
     allConvs = await loadConversations(userId);
     if (allConvs.length === 0) {
@@ -2042,13 +2043,13 @@ function extractCodeBlocks(msgs) {
 function renderArtifactsList(blocks) {
   const list = document.getElementById("artifactsList");
   if (!blocks.length) {
-    list.innerHTML = `<div class="artifacts-empty">No code blocks found in this chat yet.</div>`;
+    list.innerHTML = `<div class="artifacts-empty">No code blocks found yet.</div>`;
     return;
   }
   list.innerHTML = blocks.map((b, i) => `
     <div class="artifact-item">
       <div class="artifact-item-header">
-        <span>${escapeHtml(b.lang)}</span>
+        <span>${escapeHtml(b.lang)}${b.convTitle ? ` · ${escapeHtml(b.convTitle)}` : ""}</span>
         <button class="artifact-copy-btn" data-idx="${i}">⧉ Copy</button>
       </div>
       <pre>${escapeHtml(b.code)}</pre>
@@ -2074,6 +2075,41 @@ function openCurrentChatArtifacts() {
   document.getElementById("artifactsOverlay").style.display = "flex";
 }
 
+async function openAllArtifacts() {
+  document.getElementById("artifactsPanelTitle").textContent = "Loading artifacts…";
+  document.getElementById("artifactsList").innerHTML = "";
+  document.getElementById("artifactsOverlay").style.display = "flex";
+
+  const branchIds = allConvs.map(c => c.active_branch_id).filter(Boolean);
+  if (!branchIds.length) {
+    document.getElementById("artifactsPanelTitle").textContent = "Artifacts (0)";
+    renderArtifactsList([]);
+    return;
+  }
+
+  const { data, error } = await sb.from("chat_history").select("*").in("branch_id", branchIds).order("id");
+  if (error) {
+    showError("Failed to load artifacts: " + error.message);
+    document.getElementById("artifactsOverlay").style.display = "none";
+    return;
+  }
+
+  const branchToConvTitle = {};
+  allConvs.forEach(c => { branchToConvTitle[c.active_branch_id] = c.title; });
+
+  const allBlocks = [];
+  (data || []).forEach(m => {
+    const blocksInMsg = extractCodeBlocks([m]);
+    blocksInMsg.forEach(b => {
+      b.convTitle = branchToConvTitle[m.branch_id] || "Untitled chat";
+      allBlocks.push(b);
+    });
+  });
+
+  document.getElementById("artifactsPanelTitle").textContent = `Artifacts (${allBlocks.length})`;
+  renderArtifactsList(allBlocks);
+}
+
 document.getElementById("artifactsCloseBtn").onclick = () => {
   document.getElementById("artifactsOverlay").style.display = "none";
 };
@@ -2082,6 +2118,7 @@ document.getElementById("artifactsOverlay").onclick = (e) => {
     document.getElementById("artifactsOverlay").style.display = "none";
   }
 };
+document.getElementById("allArtifactsBtn").onclick = openAllArtifacts;
 
 document.getElementById("gearBtn").onclick = () => {
   document.getElementById("hintPopupOverlay").style.display = "flex";
