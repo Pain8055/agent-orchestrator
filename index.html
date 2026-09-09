@@ -369,6 +369,26 @@
     margin-bottom: 10px;
   }
   .nav-item-btn:hover { background: var(--border); color: var(--text); }
+  .nav-item-btn:disabled {
+    cursor: default;
+    color: var(--text-dim);
+    opacity: 0.6;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .nav-item-btn:disabled:hover { background: transparent; }
+
+  .soon-tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    padding: 1px 6px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
 
   .conv-search-wrap {
     margin-bottom: 10px;
@@ -1072,6 +1092,8 @@
 
     <button id="allArtifactsBtn" class="nav-item-btn" style="display:none;">🗂 Artifacts</button>
 
+    <button id="projectsBtn" class="nav-item-btn" style="display:none;" disabled>📁 Projects <span class="soon-tag">soon</span></button>
+
     <div class="conv-search-wrap">
       <input type="text" id="convSearchInput" class="conv-search-input" placeholder="Search chats...">
     </div>
@@ -1095,7 +1117,7 @@
       <div style="display:flex; align-items:center; gap:6px; position:relative;">
         <button class="topbar-icon-btn" id="topbarArtifactsBtn" style="display:none;" title="Artifacts in this chat">📄</button>
         <button class="topbar-icon-btn" id="topbarNewChatBtn" style="display:none;" title="New chat">➕</button>
-        <strong id="sessionUser" style="margin-left:4px;">not connected</strong>
+        <strong id="sessionUser" style="display:none;">not connected</strong>
         <button class="conv-menu-btn" id="topbarMenuBtn" style="display:none;" title="Conversation options">⋮</button>
       </div>
     </div>
@@ -2006,6 +2028,7 @@ async function connect(uid) {
     document.getElementById("topbarArtifactsBtn").style.display = "flex";
     document.getElementById("topbarNewChatBtn").style.display = "flex";
     document.getElementById("allArtifactsBtn").style.display = "block";
+    document.getElementById("projectsBtn").style.display = "flex";
 
     allConvs = await loadConversations(userId);
     if (allConvs.length === 0) {
