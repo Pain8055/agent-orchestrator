@@ -245,6 +245,24 @@
 
   .new-chat-btn:hover { opacity: 0.85; }
 
+  .conv-search-wrap {
+    margin-bottom: 10px;
+  }
+
+  .conv-search-input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    outline: none;
+  }
+  .conv-search-input:focus { border-color: var(--accent); }
+  .conv-search-input::placeholder { color: var(--text-dim); }
+
   .conv-list {
     flex: 1;
     overflow-y: auto;
@@ -268,12 +286,27 @@
     padding: 8px 10px;
     border-radius: 5px;
     cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
     transition: background 0.15s;
     flex: 1;
     min-width: 0;
+    overflow: hidden;
+  }
+
+  .conv-item-title {
+    color: inherit;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .conv-item-date {
+    font-size: 10.5px;
+    color: var(--text-dim);
+    opacity: 0.7;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .conv-item:hover { color: var(--text); }
@@ -282,6 +315,7 @@
     background: var(--accent-dim);
     color: var(--accent);
   }
+  .conv-item.active .conv-item-date { color: var(--accent); opacity: 0.7; }
 
   .conv-menu-btn {
     background: none;
@@ -911,6 +945,9 @@
 
     <button id="newChatBtn" class="new-chat-btn" style="display:none;">+ New chat</button>
 
+    <div class="conv-search-wrap">
+      <input type="text" id="convSearchInput" class="conv-search-input" placeholder="Search chats...">
+    </div>
     <div class="conv-list" id="convList"></div>
 
     <div class="sidebar-footer" id="sidebarFooter" style="display:none;">
@@ -1609,6 +1646,21 @@ async function getSiblingBranches(parentBranchId) {
   return data || [];
 }
 
+function formatRelativeDate(dateStr) {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now - date;
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHr / 24);
+
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin} minute${diffMin === 1 ? "" : "s"} ago`;
+  if (diffHr < 24) return `${diffHr} hour${diffHr === 1 ? "" : "s"} ago`;
+  if (diffDay < 7) return `${diffDay} day${diffDay === 1 ? "" : "s"} ago`;
+  return date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
 function renderConvList(convs, activeId) {
   const list = document.getElementById("convList");
   list.innerHTML = "";
@@ -1618,7 +1670,10 @@ function renderConvList(convs, activeId) {
 
     const titleEl = document.createElement("div");
     titleEl.className = "conv-item" + (c.id === activeId ? " active" : "");
-    titleEl.textContent = (c.pinned ? "📌 " : "") + c.title;
+    titleEl.innerHTML = `
+      <div class="conv-item-title">${(c.pinned ? "📌 " : "") + escapeHtml(c.title)}</div>
+      <div class="conv-item-date">${formatRelativeDate(c.updated_at)}</div>
+    `;
     titleEl.onclick = () => openConversation(c);
 
     const menuBtn = document.createElement("button");
@@ -1639,6 +1694,14 @@ function renderConvList(convs, activeId) {
     list.appendChild(item);
   });
 }
+
+document.getElementById("convSearchInput").addEventListener("input", (e) => {
+  const query = e.target.value.trim().toLowerCase();
+  const filtered = query
+    ? allConvs.filter(c => c.title.toLowerCase().includes(query))
+    : allConvs;
+  renderConvList(filtered, currentConvId);
+});
 
 function closeConvMenu() {
   const existing = document.querySelector(".conv-menu");
