@@ -256,16 +256,6 @@
     cursor: pointer;
   }
 
-  .artifacts-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.6);
-    z-index: 300;
-    display: flex;
-    align-items: flex-end;
-    justify-content: center;
-  }
-
   .chats-page {
     position: fixed;
     inset: 0;
@@ -383,42 +373,10 @@
   }
   .new-chat-fab:hover { opacity: 0.9; }
 
-  .artifacts-panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 14px 14px 0 0;
-    width: 100%;
-    max-width: 600px;
-    max-height: 80vh;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .artifacts-panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px;
-    border-bottom: 1px solid var(--border);
-    font-family: var(--mono);
-    font-size: 14px;
-    color: var(--accent);
-    font-weight: 600;
-  }
-
-  .artifacts-close {
-    background: none;
-    border: none;
-    color: var(--text-dim);
-    font-size: 16px;
-    cursor: pointer;
-    padding: 4px 8px;
-  }
-  .artifacts-close:hover { color: var(--error); }
-
   .artifacts-list {
+    flex: 1;
+    min-width: 0;
     overflow-y: auto;
-    padding: 12px 16px 20px;
   }
 
   .artifact-item {
@@ -1303,14 +1261,12 @@
   <button class="new-chat-fab" id="chatsPageNewChatBtn">+ New chat</button>
 </div>
 
-<div class="artifacts-overlay" id="artifactsOverlay" style="display:none;">
-  <div class="artifacts-panel">
-    <div class="artifacts-panel-header">
-      <span id="artifactsPanelTitle">Artifacts in this chat</span>
-      <button class="artifacts-close" id="artifactsCloseBtn">✕</button>
-    </div>
-    <div class="artifacts-list" id="artifactsList"></div>
+<div class="chats-page" id="artifactsPageView" style="display:none;">
+  <div class="chats-page-topbar">
+    <button class="hamburger" id="artifactsBackBtn">←</button>
   </div>
+  <div class="chats-page-title" id="artifactsPanelTitle">Artifacts</div>
+  <div class="artifacts-list" id="artifactsList"></div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -2367,13 +2323,13 @@ function openCurrentChatArtifacts() {
   const blocks = extractCodeBlocks(messages);
   document.getElementById("artifactsPanelTitle").textContent = `Artifacts in this chat (${blocks.length})`;
   renderArtifactsList(blocks);
-  document.getElementById("artifactsOverlay").style.display = "flex";
+  document.getElementById("artifactsPageView").style.display = "flex";
 }
 
 async function openAllArtifacts() {
   document.getElementById("artifactsPanelTitle").textContent = "Loading artifacts…";
   document.getElementById("artifactsList").innerHTML = "";
-  document.getElementById("artifactsOverlay").style.display = "flex";
+  document.getElementById("artifactsPageView").style.display = "flex";
 
   const branchIds = allConvs.map(c => c.active_branch_id).filter(Boolean);
   if (!branchIds.length) {
@@ -2385,7 +2341,7 @@ async function openAllArtifacts() {
   const { data, error } = await sb.from("chat_history").select("*").in("branch_id", branchIds).order("id");
   if (error) {
     showError("Failed to load artifacts: " + error.message);
-    document.getElementById("artifactsOverlay").style.display = "none";
+    document.getElementById("artifactsPageView").style.display = "none";
     return;
   }
 
@@ -2405,13 +2361,8 @@ async function openAllArtifacts() {
   renderArtifactsList(allBlocks);
 }
 
-document.getElementById("artifactsCloseBtn").onclick = () => {
-  document.getElementById("artifactsOverlay").style.display = "none";
-};
-document.getElementById("artifactsOverlay").onclick = (e) => {
-  if (e.target.id === "artifactsOverlay") {
-    document.getElementById("artifactsOverlay").style.display = "none";
-  }
+document.getElementById("artifactsBackBtn").onclick = () => {
+  document.getElementById("artifactsPageView").style.display = "none";
 };
 document.getElementById("allArtifactsBtn").onclick = openAllArtifacts;
 
