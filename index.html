@@ -426,6 +426,69 @@
     padding: 30px 10px;
   }
 
+  .project-field-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    display: block;
+    margin-bottom: 6px;
+  }
+
+  .project-instructions-wrap {
+    margin-bottom: 4px;
+  }
+
+  .project-instructions-input {
+    width: 100%;
+    min-height: 90px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    padding: 10px;
+    border-radius: 8px;
+    resize: vertical;
+    outline: none;
+    margin-bottom: 8px;
+  }
+  .project-instructions-input:focus { border-color: var(--accent); }
+
+  .project-save-btn {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 12.5px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  .project-item-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .project-item-row:hover { background: var(--border); }
+
+  .project-picker-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .project-picker-item:hover { color: var(--accent); }
+  .project-picker-item:last-child { border-bottom: none; }
+
   .nav-item-btn {
     width: 100%;
     background: transparent;
@@ -1163,7 +1226,7 @@
 
     <button id="allArtifactsBtn" class="nav-item-btn" style="display:none;">🗂 Artifacts</button>
 
-    <button id="projectsBtn" class="nav-item-btn" style="display:none;" disabled>📁 Projects <span class="soon-tag">soon</span></button>
+    <button id="projectsBtn" class="nav-item-btn" style="display:none;">📁 Projects</button>
 
     <div class="conv-list" id="convList"></div>
 
@@ -1249,7 +1312,7 @@
     </div>
     <div class="chats-page-topbar-right" id="chatsPageSelectActions" style="display:none;">
       <span class="selected-count" id="selectedCount">0 selected</span>
-      <button class="topbar-icon-btn" id="addToProjectBtn" title="Add to project (soon)" disabled>📦</button>
+      <button class="topbar-icon-btn" id="addToProjectBtn" title="Add to project">📦</button>
       <button class="topbar-icon-btn" id="deleteSelectedBtn" title="Delete selected">🗑</button>
     </div>
   </div>
@@ -1267,6 +1330,51 @@
   </div>
   <div class="chats-page-title" id="artifactsPanelTitle">Artifacts</div>
   <div class="artifacts-list" id="artifactsList"></div>
+</div>
+
+<div class="chats-page" id="projectsPageView" style="display:none;">
+  <div class="chats-page-topbar">
+    <button class="hamburger" id="projectsBackBtn">←</button>
+  </div>
+  <div class="chats-page-title">Projects</div>
+  <div class="chats-page-list" id="projectsList"></div>
+  <button class="new-chat-fab" id="newProjectFab">+ New project</button>
+</div>
+
+<div class="chats-page" id="projectDetailView" style="display:none;">
+  <div class="chats-page-topbar">
+    <button class="hamburger" id="projectDetailBackBtn">←</button>
+    <button class="topbar-icon-btn" id="projectDeleteBtn" title="Delete project">🗑</button>
+  </div>
+  <div class="chats-page-title" id="projectDetailName">Project</div>
+
+  <div class="project-instructions-wrap">
+    <label class="project-field-label">Instructions (applied to every chat in this project)</label>
+    <textarea id="projectInstructionsInput" class="project-instructions-input" placeholder="e.g. Always answer as a senior backend engineer, focus on Python, keep responses concise..."></textarea>
+    <button class="project-save-btn" id="projectInstructionsSaveBtn">Save instructions</button>
+  </div>
+
+  <div class="project-field-label" style="margin-top:14px;">Chats in this project</div>
+  <div class="chats-page-list" id="projectConvList"></div>
+  <button class="new-chat-fab" id="projectNewChatFab">+ New chat</button>
+</div>
+
+<div class="hint-popup-overlay" id="newProjectOverlay" style="display:none;">
+  <div class="hint-popup">
+    <div class="hint-popup-title">New project</div>
+    <input type="text" id="newProjectName" class="conv-search-input" placeholder="Project name" style="margin-bottom:10px;">
+    <textarea id="newProjectInstructions" class="project-instructions-input" placeholder="Instructions (optional) — applied to every chat in this project"></textarea>
+    <button class="hint-popup-close" id="newProjectCreateBtn">Create project</button>
+    <button class="hint-popup-close" id="newProjectCancelBtn" style="background:transparent; color:var(--text-dim); border:1px solid var(--border); margin-top:8px;">Cancel</button>
+  </div>
+</div>
+
+<div class="hint-popup-overlay" id="addToProjectOverlay" style="display:none;">
+  <div class="hint-popup">
+    <div class="hint-popup-title">Add to project</div>
+    <div id="addToProjectList"></div>
+    <button class="hint-popup-close" id="addToProjectCancelBtn" style="background:transparent; color:var(--text-dim); border:1px solid var(--border); margin-top:8px;">Cancel</button>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -1365,10 +1473,16 @@ let currentConvId = null;
 let messages = [];
 
 // ---------------- API calls ----------------
+let currentProjectInstructions = null;
+
 async function callAgentRaw(endpoint, agent, prompt, maxTokens, images) {
+  let effectiveSystem = agent.system;
+  if (currentProjectInstructions) {
+    effectiveSystem += `\n\nProject-specific instructions (always follow these for this project): ${currentProjectInstructions}`;
+  }
   const body = {
     model: agent.model,
-    system: agent.system,
+    system: effectiveSystem,
     prompt: prompt,
     max_tokens: maxTokens
   };
@@ -1849,6 +1963,187 @@ async function loadConversations(uid) {
   return data || [];
 }
 
+// ---------------- Projects ----------------
+let allProjects = [];
+
+async function loadProjects(uid) {
+  const { data } = await sb.from("projects").select("*").eq("user_id", uid).order("updated_at", { ascending: false });
+  return data || [];
+}
+
+async function createProjectRow(uid, name, instructions) {
+  const { data, error } = await sb.from("projects").insert({ user_id: uid, name, instructions: instructions || null }).select().single();
+  if (error) { showError("Failed to create project: " + error.message); return null; }
+  return data;
+}
+
+function renderProjectsList() {
+  const list = document.getElementById("projectsList");
+  if (!allProjects.length) {
+    list.innerHTML = `<div class="artifacts-empty">No projects yet. Create one to group related chats with shared instructions.</div>`;
+    return;
+  }
+  list.innerHTML = "";
+  allProjects.forEach(p => {
+    const row = document.createElement("div");
+    row.className = "project-item-row";
+    row.innerHTML = `<span>📁 ${escapeHtml(p.name)}</span><span style="color:var(--text-dim); font-size:11px;">${formatRelativeDate(p.updated_at)}</span>`;
+    row.onclick = () => openProjectDetail(p);
+    list.appendChild(row);
+  });
+}
+
+function openProjectsPage() {
+  renderProjectsList();
+  document.getElementById("projectsPageView").style.display = "flex";
+}
+
+let currentDetailProjectId = null;
+
+function openProjectDetail(project) {
+  currentDetailProjectId = project.id;
+  document.getElementById("projectDetailName").textContent = project.name;
+  document.getElementById("projectInstructionsInput").value = project.instructions || "";
+  renderProjectConvList(project.id);
+  document.getElementById("projectsPageView").style.display = "none";
+  document.getElementById("projectDetailView").style.display = "flex";
+}
+
+function renderProjectConvList(projectId) {
+  const list = document.getElementById("projectConvList");
+  const convs = allConvs.filter(c => c.project_id === projectId);
+  list.innerHTML = "";
+  if (!convs.length) {
+    list.innerHTML = `<div class="artifacts-empty">No chats in this project yet.</div>`;
+    return;
+  }
+  convs.forEach(c => {
+    list.appendChild(buildConvItemElement(c, currentConvId, (conv) => {
+      document.getElementById("projectDetailView").style.display = "none";
+      openConversation(conv);
+    }));
+  });
+}
+
+document.getElementById("projectsBtn").onclick = openProjectsPage;
+document.getElementById("projectsBackBtn").onclick = () => {
+  document.getElementById("projectsPageView").style.display = "none";
+};
+document.getElementById("projectDetailBackBtn").onclick = () => {
+  document.getElementById("projectDetailView").style.display = "none";
+  document.getElementById("projectsPageView").style.display = "flex";
+};
+
+document.getElementById("newProjectFab").onclick = () => {
+  document.getElementById("newProjectName").value = "";
+  document.getElementById("newProjectInstructions").value = "";
+  document.getElementById("newProjectOverlay").style.display = "flex";
+};
+document.getElementById("newProjectCancelBtn").onclick = () => {
+  document.getElementById("newProjectOverlay").style.display = "none";
+};
+document.getElementById("newProjectCreateBtn").onclick = async () => {
+  const name = document.getElementById("newProjectName").value.trim();
+  if (!name) return;
+  const instructions = document.getElementById("newProjectInstructions").value.trim();
+  const project = await createProjectRow(userId, name, instructions);
+  if (project) {
+    allProjects.unshift(project);
+    document.getElementById("newProjectOverlay").style.display = "none";
+    renderProjectsList();
+  }
+};
+
+document.getElementById("projectInstructionsSaveBtn").onclick = async () => {
+  const newInstructions = document.getElementById("projectInstructionsInput").value.trim();
+  const { error } = await sb.from("projects").update({ instructions: newInstructions, updated_at: new Date().toISOString() }).eq("id", currentDetailProjectId);
+  if (error) { showError("Failed to save instructions: " + error.message); return; }
+  const proj = allProjects.find(p => p.id === currentDetailProjectId);
+  if (proj) proj.instructions = newInstructions;
+  if (currentConvId) {
+    const conv = allConvs.find(c => c.id === currentConvId);
+    if (conv && conv.project_id === currentDetailProjectId) currentProjectInstructions = newInstructions;
+  }
+  const btn = document.getElementById("projectInstructionsSaveBtn");
+  const original = btn.textContent;
+  btn.textContent = "✓ Saved";
+  setTimeout(() => { btn.textContent = original; }, 1200);
+};
+
+document.getElementById("projectNewChatFab").onclick = async () => {
+  const proj = allProjects.find(p => p.id === currentDetailProjectId);
+  const conv = await createConversation(userId, "New chat");
+  await sb.from("conversations").update({ project_id: currentDetailProjectId }).eq("id", conv.id);
+  conv.project_id = currentDetailProjectId;
+  allConvs.unshift(conv);
+  currentProjectInstructions = proj ? proj.instructions : null;
+  document.getElementById("projectDetailView").style.display = "none";
+  document.getElementById("log").innerHTML = "";
+  messages = [];
+  currentConvId = conv.id;
+  currentBranchId = conv.active_branch_id;
+  document.getElementById("gateView").style.display = "none";
+  document.getElementById("chatView").style.display = "flex";
+  renderConvList(allConvs, currentConvId);
+};
+
+document.getElementById("projectDeleteBtn").onclick = async () => {
+  const proj = allProjects.find(p => p.id === currentDetailProjectId);
+  if (!proj) return;
+  if (!confirm(`Delete project "${proj.name}"? Chats inside it will NOT be deleted, just unlinked.`)) return;
+
+  const unlinkRes = await sb.from("conversations").update({ project_id: null }).eq("project_id", currentDetailProjectId);
+  if (unlinkRes.error) { showError("Failed to unlink chats: " + unlinkRes.error.message); return; }
+
+  const delRes = await sb.from("projects").delete().eq("id", currentDetailProjectId);
+  if (delRes.error) { showError("Failed to delete project: " + delRes.error.message); return; }
+
+  allConvs.forEach(c => { if (c.project_id === currentDetailProjectId) c.project_id = null; });
+  allProjects = allProjects.filter(p => p.id !== currentDetailProjectId);
+
+  document.getElementById("projectDetailView").style.display = "none";
+  document.getElementById("projectsPageView").style.display = "flex";
+  renderProjectsList();
+};
+
+// ---------------- Add to project (from multi-select) ----------------
+document.getElementById("addToProjectBtn").onclick = () => {
+  if (!selectedConvIds.size) return;
+  const list = document.getElementById("addToProjectList");
+  if (!allProjects.length) {
+    list.innerHTML = `<div class="artifacts-empty">No projects yet. Create one first from the Projects page.</div>`;
+  } else {
+    list.innerHTML = "";
+    allProjects.forEach(p => {
+      const item = document.createElement("div");
+      item.className = "project-picker-item";
+      item.innerHTML = `<span>📁 ${escapeHtml(p.name)}</span>`;
+      item.onclick = () => assignSelectedToProject(p.id);
+      list.appendChild(item);
+    });
+  }
+  document.getElementById("addToProjectOverlay").style.display = "flex";
+};
+document.getElementById("addToProjectCancelBtn").onclick = () => {
+  document.getElementById("addToProjectOverlay").style.display = "none";
+};
+
+async function assignSelectedToProject(projectId) {
+  const ids = Array.from(selectedConvIds);
+  const { error } = await sb.from("conversations").update({ project_id: projectId }).in("id", ids);
+  if (error) { showError("Failed to add to project: " + error.message); return; }
+
+  allConvs.forEach(c => { if (ids.includes(c.id)) c.project_id = projectId; });
+
+  document.getElementById("addToProjectOverlay").style.display = "none";
+  chatsPageSelectMode = false;
+  selectedConvIds.clear();
+  document.getElementById("chatsPageNormalActions").style.display = "flex";
+  document.getElementById("chatsPageSelectActions").style.display = "none";
+  refreshChatsPageList();
+  renderConvList(allConvs, currentConvId);
+}
+
 async function createConversation(uid, title = "New chat") {
   const { data: conv } = await sb.from("conversations").insert({ user_id: uid, title }).select().single();
   const { data: branch } = await sb.from("branches").insert({ conversation_id: conv.id, parent_branch_id: null }).select().single();
@@ -2217,6 +2512,14 @@ async function openConversation(conv) {
     conv.active_branch_id = currentBranchId;
   }
 
+  // Set project instructions context for this conversation, if it belongs to a project
+  if (conv.project_id) {
+    const proj = allProjects.find(p => p.id === conv.project_id);
+    currentProjectInstructions = proj ? proj.instructions : null;
+  } else {
+    currentProjectInstructions = null;
+  }
+
   renderConvList(allConvs, currentConvId);
   document.getElementById("log").innerHTML = "";
   messages = await loadMessages(currentBranchId);
@@ -2257,6 +2560,8 @@ async function connect(uid) {
     document.getElementById("openChatsPageBtn").style.display = "block";
     document.getElementById("allArtifactsBtn").style.display = "block";
     document.getElementById("projectsBtn").style.display = "flex";
+
+    allProjects = await loadProjects(userId);
 
     allConvs = await loadConversations(userId);
     if (allConvs.length === 0) {
