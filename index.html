@@ -1475,7 +1475,21 @@ let messages = [];
 // ---------------- API calls ----------------
 let currentProjectInstructions = null;
 
-async function callAgentRaw(endpoint, agent, prompt, maxTokens, images) {
+function sanitizeForHistory(content) {
+  if (!content) return "";
+  let c = content.replace(/\[\[file:[^\]]*\]\][\s\S]*?\[\[\/file\]\]/g, "[attached file omitted from history]");
+  c = c.replace(/!\[[^\]]*\]\(data:[^)]+\)/g, "[image omitted from history]");
+  if (c.length > 800) c = c.slice(0, 800) + "...[truncated]";
+  return c;
+}
+
+function buildHistoryForAgent(msgsArray, excludeLastN = 1) {
+  const trimmed = msgsArray.slice(0, msgsArray.length - excludeLastN);
+  const recent = trimmed.slice(-8); // cap to last 8 turns to control token usage
+  return recent.map(m => ({ role: m.role, content: sanitizeForHistory(m.content) }));
+}
+
+async function callAgentRaw(endpoint, agent, prompt, maxTokens, images, history) {
   let effectiveSystem = agent.system;
   if (currentProjectInstructions) {
     effectiveSystem += `\n\nProject-specific instructions (always follow these for this project): ${currentProjectInstructions}`;
@@ -1487,6 +1501,7 @@ async function callAgentRaw(endpoint, agent, prompt, maxTokens, images) {
     max_tokens: maxTokens
   };
   if (images && images.length) body.images = images;
+  if (history && history.length) body.history = history;
   const res = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1513,7 +1528,7 @@ function isRateLimitError(errorJson) {
   }
 }
 
-async function callAgent(role, prompt, maxTokens = null, images = null) {
+async function callAgent(role, prompt, maxTokens = null, images = null, history = null) {
   const agent = AGENTS[role];
   if (maxTokens === null) {
     maxTokens = (role === "code" || role === "debug" || role === "reasoning") ? 3000 : 1200;
@@ -1522,7 +1537,7 @@ async function callAgent(role, prompt, maxTokens = null, images = null) {
 
   let attempt = 0;
   while (attempt < 3) {
-    const { ok, data } = await callAgentRaw(endpoint, agent, prompt, maxTokens, images);
+    const { ok, data } = await callAgentRaw(endpoint, agent, prompt, maxTokens, images, history);
     if (ok) return cleanThinking(data.content || "");
 
     if (isRateLimitError(data) && attempt < 2) {
@@ -1588,18 +1603,18 @@ function isComplex(task) {
   return task.split(" ").length > 25 || hits >= 2;
 }
 
-async function runSimple(task) {
+async function runSimple(task, history = null) {
   const [role, clean] = detectRole(task);
   if (role === "search") {
     const results = await webSearch(clean);
-    const summary = await callAgent("head", `Summarize these search results for: ${clean}\n\n${results}`);
+    const summary = await callAgent("head", `Summarize these search results for: ${clean}\n\n${results}`, null, null, history);
     return { result: summary, role };
   }
-  const result = await callAgent(role, clean);
+  const result = await callAgent(role, clean, null, null, history);
   return { result, role };
 }
 
-async function runMultistep(task, traceEl) {
+async function runMultistep(task, traceEl, history = null) {
   const clean = task.toLowerCase().startsWith("plan:") ? task.slice(5).trim() : task;
 
   const planPrompt = `Break this task into 2-5 ordered steps. For each step pick exactly one agent from: code, debug, reasoning, writing, design, search.
@@ -1608,7 +1623,7 @@ STEP | agent | short description of what to do
 
 Task: ${clean}`;
 
-  const planRaw = await callAgent("head", planPrompt, 400);
+  const planRaw = await callAgent("head", planPrompt, 400, null, history);
   const steps = [];
   planRaw.split("\n").forEach(line => {
     const parts = line.split("|").map(p => p.trim());
@@ -1618,7 +1633,7 @@ Task: ${clean}`;
   });
 
   if (steps.length === 0) {
-    const result = await callAgent("head", clean);
+    const result = await callAgent("head", clean, null, null, history);
     return { result, role: "head" };
   }
 
@@ -1631,16 +1646,16 @@ Task: ${clean}`;
     let result;
     if (role === "search") {
       const results = await webSearch(desc);
-      result = await callAgent("head", `Summarize for: ${desc}\n\n${results}`);
+      result = await callAgent("head", `Summarize for: ${desc}\n\n${results}`, null, null, history);
     } else {
-      result = await callAgent(role, desc);
+      result = await callAgent(role, desc, null, null, history);
     }
     stepResults.push([role, desc, result]);
   }
   updatePipeline(traceEl, steps.map(s => s[0]), steps.length);
 
   const combined = stepResults.map(([r,d,res]) => `[${r.toUpperCase()}] ${d}\n${res}`).join("\n\n");
-  const final = await callAgent("head", `Combine these sub-task results into one clear final answer for: ${clean}\n\n${combined}`, 1000);
+  const final = await callAgent("head", `Combine these sub-task results into one clear final answer for: ${clean}\n\n${combined}`, 1000, null, history);
   return { result: final, role: "multi-step", steps: stepResults };
 }
 
@@ -1906,8 +1921,9 @@ async function regenerateMessage(wrap, msgId) {
   // Find the user message immediately before this assistant response
   const idx = messages.findIndex(m => m.id === msgId);
   let userTask = null;
+  let userTaskIdx = -1;
   for (let i = idx - 1; i >= 0; i--) {
-    if (messages[i].role === "user") { userTask = messages[i].content; break; }
+    if (messages[i].role === "user") { userTask = messages[i].content; userTaskIdx = i; break; }
   }
   if (!userTask) {
     // fallback: look at DOM order if not found in messages array
@@ -1917,6 +1933,8 @@ async function regenerateMessage(wrap, msgId) {
   }
   if (!userTask) return;
 
+  const history = userTaskIdx >= 0 ? buildHistoryForAgent(messages.slice(0, userTaskIdx + 1), 1) : null;
+
   const bubble = wrap.querySelector(".bubble");
   const traceEl = wrap.querySelector(".pipeline") || document.createElement("div");
   bubble.innerHTML = `<span class="thinking">regenerating</span>`;
@@ -1924,10 +1942,10 @@ async function regenerateMessage(wrap, msgId) {
   try {
     let output, role;
     if (isComplex(userTask)) {
-      const res = await runMultistep(userTask, traceEl);
+      const res = await runMultistep(userTask, traceEl, history);
       output = res.result; role = res.role;
     } else {
-      const res = await runSimple(userTask);
+      const res = await runSimple(userTask, history);
       output = res.result; role = res.role;
     }
     bubble.innerHTML = formatContent(output);
@@ -2939,16 +2957,18 @@ async function runAndSaveResponse(task, visionData = null) {
   thinkingWrap.insertBefore(traceEl, bubble);
   bubble.innerHTML = `<span class="thinking">processing</span>`;
 
+  const history = buildHistoryForAgent(messages, 1); // exclude the message we just sent (passed as prompt)
+
   try {
     let output, role;
     if (visionData) {
       role = "vision";
-      output = await callAgent("vision", visionData.question || "Describe this image in detail.", 1200, visionData.images);
+      output = await callAgent("vision", visionData.question || "Describe this image in detail.", 1200, visionData.images, history);
     } else if (isComplex(task)) {
-      const res = await runMultistep(task, traceEl);
+      const res = await runMultistep(task, traceEl, history);
       output = res.result; role = res.role;
     } else {
-      const res = await runSimple(task);
+      const res = await runSimple(task, history);
       output = res.result; role = res.role;
     }
 
