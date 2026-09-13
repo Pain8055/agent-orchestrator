@@ -1070,7 +1070,7 @@
     box-shadow: 0 4px 12px rgba(0,0,0,0.4);
   }
 
-  #attachBtn {
+  #attachBtn, #skillPickerBtn {
     background: none;
     border: none;
     color: var(--text-dim);
@@ -1079,7 +1079,49 @@
     padding: 4px 6px;
     flex-shrink: 0;
   }
-  #attachBtn:hover { color: var(--accent); }
+  #attachBtn:hover, #skillPickerBtn:hover { color: var(--accent); }
+
+  .skill-picker-popup {
+    position: fixed;
+    z-index: 250;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    max-width: min(360px, 90vw);
+    max-height: 260px;
+    overflow-y: auto;
+  }
+
+  .skill-picker-item {
+    padding: 10px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+  }
+  .skill-picker-item:last-child { border-bottom: none; }
+  .skill-picker-item:hover { background: var(--border); }
+  .skill-picker-item-name {
+    font-family: var(--sans);
+    font-size: 13px;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .skill-picker-item-preview {
+    font-family: var(--sans);
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 2px;
+  }
+  .skill-picker-empty {
+    padding: 16px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 12px;
+    text-align: center;
+  }
 
   .attach-chips {
     max-width: min(800px, 92vw);
@@ -1228,6 +1270,8 @@
 
     <button id="projectsBtn" class="nav-item-btn" style="display:none;">📁 Projects</button>
 
+    <button id="skillsBtn" class="nav-item-btn" style="display:none;">🧩 Skills</button>
+
     <div class="conv-list" id="convList"></div>
 
     <div class="sidebar-footer" id="sidebarFooter" style="display:none;">
@@ -1269,13 +1313,19 @@
         <span class="reply-quote" id="replyQuoteText"></span>
         <button class="reply-cancel" id="replyCancelBtn">✕</button>
       </div>
+      <div class="reply-preview" id="activeSkillChip" style="display:none;">
+        <span class="reply-label">🧩 Skill:</span>
+        <span class="reply-quote" id="activeSkillName"></span>
+        <button class="reply-cancel" id="activeSkillCancelBtn">✕</button>
+      </div>
       <div class="attach-chips" id="attachChips" style="display:none;"></div>
       <div class="input-bar">
         <div class="input-pill">
+          <button id="skillPickerBtn" title="Use a skill" type="button">🧩</button>
           <button id="attachBtn" title="Attach file" type="button">📎</button>
           <input type="file" id="fileInput" style="display:none;" multiple accept=".txt,.md,.py,.js,.ts,.json,.csv,.html,.css,.pdf,image/*">
           <span class="prompt-symbol">&gt;</span>
-          <input type="text" id="taskInput" placeholder="Type a task...">
+          <input type="text" id="taskInput" placeholder="Type a task... (/ for skills)">
           <button id="sendBtn" title="Send">➤</button>
         </div>
       </div>
@@ -1376,6 +1426,28 @@
     <button class="hint-popup-close" id="addToProjectCancelBtn" style="background:transparent; color:var(--text-dim); border:1px solid var(--border); margin-top:8px;">Cancel</button>
   </div>
 </div>
+
+<div class="chats-page" id="skillsPageView" style="display:none;">
+  <div class="chats-page-topbar">
+    <button class="hamburger" id="skillsBackBtn">←</button>
+  </div>
+  <div class="chats-page-title">Skills</div>
+  <div class="chats-page-list" id="skillsList"></div>
+  <button class="new-chat-fab" id="newSkillFab">+ New skill</button>
+</div>
+
+<div class="hint-popup-overlay" id="newSkillOverlay" style="display:none;">
+  <div class="hint-popup">
+    <div class="hint-popup-title" id="skillModalTitle">New skill</div>
+    <input type="text" id="newSkillName" class="conv-search-input" placeholder="Skill name (e.g. code-review)" style="margin-bottom:10px;">
+    <textarea id="newSkillInstructions" class="project-instructions-input" placeholder="Instructions this skill applies, e.g. 'Always check for SQL injection, N+1 queries, and missing error handling.'"></textarea>
+    <button class="hint-popup-close" id="newSkillSaveBtn">Save skill</button>
+    <button class="hint-popup-close" id="newSkillCancelBtn" style="background:transparent; color:var(--text-dim); border:1px solid var(--border); margin-top:8px;">Cancel</button>
+    <button class="hint-popup-close" id="deleteSkillBtn" style="background:transparent; color:var(--error); border:1px solid var(--error); margin-top:8px; display:none;">Delete skill</button>
+  </div>
+</div>
+
+<div class="skill-picker-popup" id="skillPickerPopup" style="display:none;"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
@@ -1536,6 +1608,7 @@ let messages = [];
 
 // ---------------- API calls ----------------
 let currentProjectInstructions = null;
+let currentSkillInstructions = null;
 
 function sanitizeForHistory(content) {
   if (!content) return "";
@@ -1555,6 +1628,9 @@ async function callAgentRaw(endpoint, model, system, prompt, maxTokens, images, 
   let effectiveSystem = system;
   if (currentProjectInstructions) {
     effectiveSystem += `\n\nProject-specific instructions (always follow these for this project): ${currentProjectInstructions}`;
+  }
+  if (currentSkillInstructions) {
+    effectiveSystem += `\n\nActive skill instructions (apply these for this message): ${currentSkillInstructions}`;
   }
   const body = {
     model: model,
@@ -2202,6 +2278,180 @@ async function assignSelectedToProject(projectId) {
   renderConvList(allConvs, currentConvId);
 }
 
+// ---------------- Skills ----------------
+let allSkills = [];
+let activeSkill = null;
+let editingSkillId = null;
+
+async function loadSkills(uid) {
+  const { data } = await sb.from("skills").select("*").eq("user_id", uid).order("updated_at", { ascending: false });
+  return data || [];
+}
+
+function renderSkillsList() {
+  const list = document.getElementById("skillsList");
+  if (!allSkills.length) {
+    list.innerHTML = `<div class="artifacts-empty">No skills yet. Create one — a reusable instruction set you can turn on for any message with /skillname.</div>`;
+    return;
+  }
+  list.innerHTML = "";
+  allSkills.forEach(s => {
+    const row = document.createElement("div");
+    row.className = "project-item-row";
+    row.innerHTML = `<span>🧩 ${escapeHtml(s.name)}</span><span style="color:var(--text-dim); font-size:11px;">${formatRelativeDate(s.updated_at)}</span>`;
+    row.onclick = () => openEditSkill(s);
+    list.appendChild(row);
+  });
+}
+
+function openSkillsPage() {
+  renderSkillsList();
+  document.getElementById("skillsPageView").style.display = "flex";
+}
+
+function openNewSkillModal() {
+  editingSkillId = null;
+  document.getElementById("skillModalTitle").textContent = "New skill";
+  document.getElementById("newSkillName").value = "";
+  document.getElementById("newSkillName").disabled = false;
+  document.getElementById("newSkillInstructions").value = "";
+  document.getElementById("deleteSkillBtn").style.display = "none";
+  document.getElementById("newSkillOverlay").style.display = "flex";
+}
+
+function openEditSkill(skill) {
+  editingSkillId = skill.id;
+  document.getElementById("skillModalTitle").textContent = "Edit skill";
+  document.getElementById("newSkillName").value = skill.name;
+  document.getElementById("newSkillName").disabled = true; // keep names stable since /commands reference them
+  document.getElementById("newSkillInstructions").value = skill.instructions;
+  document.getElementById("deleteSkillBtn").style.display = "block";
+  document.getElementById("newSkillOverlay").style.display = "flex";
+}
+
+document.getElementById("skillsBtn").onclick = openSkillsPage;
+document.getElementById("skillsBackBtn").onclick = () => {
+  document.getElementById("skillsPageView").style.display = "none";
+};
+document.getElementById("newSkillFab").onclick = openNewSkillModal;
+document.getElementById("newSkillCancelBtn").onclick = () => {
+  document.getElementById("newSkillOverlay").style.display = "none";
+};
+
+document.getElementById("newSkillSaveBtn").onclick = async () => {
+  const name = document.getElementById("newSkillName").value.trim().toLowerCase().replace(/\s+/g, "-");
+  const instructions = document.getElementById("newSkillInstructions").value.trim();
+  if (!name || !instructions) return;
+
+  if (editingSkillId) {
+    const { error } = await sb.from("skills").update({ instructions, updated_at: new Date().toISOString() }).eq("id", editingSkillId);
+    if (error) { showError("Failed to update skill: " + error.message); return; }
+    const s = allSkills.find(x => x.id === editingSkillId);
+    if (s) s.instructions = instructions;
+  } else {
+    if (allSkills.some(s => s.name === name)) { showError("A skill with that name already exists."); return; }
+    const { data, error } = await sb.from("skills").insert({ user_id: userId, name, instructions }).select().single();
+    if (error) { showError("Failed to create skill: " + error.message); return; }
+    allSkills.unshift(data);
+  }
+  document.getElementById("newSkillOverlay").style.display = "none";
+  renderSkillsList();
+};
+
+document.getElementById("deleteSkillBtn").onclick = async () => {
+  if (!editingSkillId) return;
+  if (!confirm("Delete this skill?")) return;
+  const { error } = await sb.from("skills").delete().eq("id", editingSkillId);
+  if (error) { showError("Failed to delete skill: " + error.message); return; }
+  allSkills = allSkills.filter(s => s.id !== editingSkillId);
+  document.getElementById("newSkillOverlay").style.display = "none";
+  renderSkillsList();
+};
+
+// ---------------- Skill activation (picker + slash command) ----------------
+function setActiveSkill(skill) {
+  activeSkill = skill;
+  document.getElementById("activeSkillName").textContent = skill.name;
+  document.getElementById("activeSkillChip").style.display = "flex";
+}
+
+function clearActiveSkill() {
+  activeSkill = null;
+  document.getElementById("activeSkillChip").style.display = "none";
+}
+
+document.getElementById("activeSkillCancelBtn").onclick = clearActiveSkill;
+
+function showSkillPicker(anchorRect, filterQuery) {
+  const popup = document.getElementById("skillPickerPopup");
+  const matches = filterQuery
+    ? allSkills.filter(s => s.name.toLowerCase().includes(filterQuery.toLowerCase()))
+    : allSkills;
+
+  if (!matches.length) {
+    popup.innerHTML = `<div class="skill-picker-empty">${allSkills.length ? "No matching skills" : "No skills yet — create one from the Skills page"}</div>`;
+  } else {
+    popup.innerHTML = matches.map(s => `
+      <div class="skill-picker-item" data-id="${s.id}">
+        <div class="skill-picker-item-name">🧩 ${escapeHtml(s.name)}</div>
+        <div class="skill-picker-item-preview">${escapeHtml(s.instructions)}</div>
+      </div>
+    `).join("");
+    popup.querySelectorAll(".skill-picker-item").forEach(item => {
+      item.onclick = () => {
+        const skill = allSkills.find(s => s.id === parseInt(item.dataset.id));
+        if (skill) {
+          setActiveSkill(skill);
+          // If activated while typing "/query", clear that part from the input
+          const input = document.getElementById("taskInput");
+          if (input.value.startsWith("/")) input.value = "";
+        }
+        hideSkillPicker();
+      };
+    });
+  }
+
+  popup.style.display = "block";
+  popup.style.bottom = (window.innerHeight - anchorRect.top + 8) + "px";
+  popup.style.left = Math.max(8, anchorRect.left) + "px";
+}
+
+function hideSkillPicker() {
+  document.getElementById("skillPickerPopup").style.display = "none";
+}
+
+document.getElementById("skillPickerBtn").onclick = (e) => {
+  const rect = document.getElementById("skillPickerBtn").getBoundingClientRect();
+  showSkillPicker(rect, "");
+};
+
+document.getElementById("taskInput").addEventListener("input", (e) => {
+  const val = e.target.value;
+  if (val.startsWith("/")) {
+    const query = val.slice(1);
+    const rect = document.getElementById("taskInput").getBoundingClientRect();
+    showSkillPicker(rect, query);
+  } else {
+    hideSkillPicker();
+  }
+});
+
+document.addEventListener("click", (e) => {
+  const popup = document.getElementById("skillPickerPopup");
+  if (popup.style.display === "block" && !popup.contains(e.target) && e.target.id !== "skillPickerBtn" && e.target.id !== "taskInput") {
+    hideSkillPicker();
+  }
+});
+
+// Fallback: if user typed "/skillname message" directly and hit send without using the popup
+function extractSlashSkill(text) {
+  const match = text.match(/^\/(\S+)\s?([\s\S]*)$/);
+  if (!match) return null;
+  const skill = allSkills.find(s => s.name.toLowerCase() === match[1].toLowerCase());
+  if (!skill) return null;
+  return { skill, remainingText: match[2] };
+}
+
 async function createConversation(uid, title = "New chat") {
   const { data: conv } = await sb.from("conversations").insert({ user_id: uid, title }).select().single();
   const { data: branch } = await sb.from("branches").insert({ conversation_id: conv.id, parent_branch_id: null }).select().single();
@@ -2618,8 +2868,10 @@ async function connect(uid) {
     document.getElementById("openChatsPageBtn").style.display = "block";
     document.getElementById("allArtifactsBtn").style.display = "block";
     document.getElementById("projectsBtn").style.display = "flex";
+    document.getElementById("skillsBtn").style.display = "flex";
 
     allProjects = await loadProjects(userId);
+    allSkills = await loadSkills(userId);
 
     allConvs = await loadConversations(userId);
     if (allConvs.length === 0) {
@@ -2879,10 +3131,25 @@ document.getElementById("fileInput").addEventListener("change", (e) => {
 
 async function sendTask() {
   const input = document.getElementById("taskInput");
-  const typed = input.value.trim();
+  let typed = input.value.trim();
   if ((!typed && !attachedFiles.length) || !userId || !currentConvId) return;
   input.value = "";
+  hideSkillPicker();
   document.getElementById("sendBtn").disabled = true;
+
+  // Resolve which skill (if any) applies to this send: picker-activated, or typed as /skillname
+  let skillForThisSend = null;
+  if (activeSkill) {
+    skillForThisSend = activeSkill;
+    clearActiveSkill();
+  } else if (typed.startsWith("/")) {
+    const parsed = extractSlashSkill(typed);
+    if (parsed) {
+      skillForThisSend = parsed.skill;
+      typed = parsed.remainingText.trim();
+    }
+  }
+  currentSkillInstructions = skillForThisSend ? skillForThisSend.instructions : null;
 
   let task = typed;
   if (replyContext) {
@@ -2930,6 +3197,7 @@ async function sendTask() {
   }
 
   await runAndSaveResponse(task, imageDataUrls.length ? { images: imageDataUrls, question: typed } : null);
+  currentSkillInstructions = null;
   document.getElementById("sendBtn").disabled = false;
 }
 
