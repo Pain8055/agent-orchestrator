@@ -1386,6 +1386,13 @@ const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 
 const GROQ_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/smooth-task";
 const OPENROUTER_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/Openrouter-chat";
+const GEMINI_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/gemini-chat";
+
+const PROVIDER_ENDPOINTS = {
+  groq: GROQ_ENDPOINT,
+  openrouter: OPENROUTER_ENDPOINT,
+  gemini: GEMINI_ENDPOINT,
+};
 const TAVILY_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/Tavily-chat1";
 // ----------------------------------------------------------
 
@@ -1456,14 +1463,69 @@ try {
 }
 
 const AGENTS = {
-  head:      { provider: "groq", model: "openai/gpt-oss-120b", system: "You are the lead orchestrator of an AI agent team. You plan, delegate, and give clear final answers." },
-  code:      { provider: "openrouter", model: "openrouter/free", system: "You are a senior software engineer. Write correct, clean, working code. Briefly explain key decisions. No fluff." },
-  debug:     { provider: "openrouter", model: "openrouter/free", system: "You are a debugging specialist. Given broken code or an error, find the root cause precisely and give the exact fix. Explain WHY it broke." },
-  reasoning: { provider: "openrouter", model: "openrouter/free", system: "You are a reasoning and math specialist. Solve problems step by step, show your work, double-check your final answer." },
-  writing:   { provider: "groq", model: "openai/gpt-oss-120b", system: "You are a professional writing assistant. Write clear, well-structured, natural text for the requested purpose." },
-  design:    { provider: "groq", model: "openai/gpt-oss-120b", system: "You are a UI/UX design specialist. Give concrete, specific design decisions (colors, layout, spacing, typography) — never vague advice." },
-  review:    { provider: "groq", model: "openai/gpt-oss-120b", system: "You are a strict quality reviewer. Given a task and a draft answer, find any mistakes, gaps, or weaknesses. If it's good, say so briefly. If not, give the corrected version." },
-  vision:    { provider: "openrouter", model: "openrouter/free", system: "You are a vision assistant. Describe and analyze the attached image(s) clearly and answer the user's question about them." },
+  head: {
+    system: "You are the lead orchestrator of an AI agent team. You plan, delegate, and give clear final answers.",
+    providers: [
+      { provider: "groq", model: "openai/gpt-oss-120b" },
+      { provider: "gemini", model: "gemini-3.6-flash" },
+      { provider: "openrouter", model: "openrouter/free" },
+    ]
+  },
+  code: {
+    system: "You are a senior software engineer. Write correct, clean, working code. Briefly explain key decisions. No fluff.",
+    providers: [
+      { provider: "openrouter", model: "openrouter/free" },
+      { provider: "gemini", model: "gemini-3.6-flash" },
+      { provider: "groq", model: "openai/gpt-oss-120b" },
+    ]
+  },
+  debug: {
+    system: "You are a debugging specialist. Given broken code or an error, find the root cause precisely and give the exact fix. Explain WHY it broke.",
+    providers: [
+      { provider: "openrouter", model: "openrouter/free" },
+      { provider: "gemini", model: "gemini-3.6-flash" },
+      { provider: "groq", model: "openai/gpt-oss-120b" },
+    ]
+  },
+  reasoning: {
+    system: "You are a reasoning and math specialist. Solve problems step by step, show your work, double-check your final answer.",
+    providers: [
+      { provider: "openrouter", model: "openrouter/free" },
+      { provider: "gemini", model: "gemini-3.6-flash" },
+      { provider: "groq", model: "openai/gpt-oss-120b" },
+    ]
+  },
+  writing: {
+    system: "You are a professional writing assistant. Write clear, well-structured, natural text for the requested purpose.",
+    providers: [
+      { provider: "groq", model: "openai/gpt-oss-120b" },
+      { provider: "gemini", model: "gemini-3.6-flash" },
+      { provider: "openrouter", model: "openrouter/free" },
+    ]
+  },
+  design: {
+    system: "You are a UI/UX design specialist. Give concrete, specific design decisions (colors, layout, spacing, typography) — never vague advice.",
+    providers: [
+      { provider: "groq", model: "openai/gpt-oss-120b" },
+      { provider: "gemini", model: "gemini-3.6-flash" },
+      { provider: "openrouter", model: "openrouter/free" },
+    ]
+  },
+  review: {
+    system: "You are a strict quality reviewer. Given a task and a draft answer, find any mistakes, gaps, or weaknesses. If it's good, say so briefly. If not, give the corrected version.",
+    providers: [
+      { provider: "groq", model: "openai/gpt-oss-120b" },
+      { provider: "gemini", model: "gemini-3.6-flash" },
+      { provider: "openrouter", model: "openrouter/free" },
+    ]
+  },
+  vision: {
+    system: "You are a vision assistant. Describe and analyze the attached image(s) clearly and answer the user's question about them.",
+    providers: [
+      { provider: "openrouter", model: "openrouter/free" },
+      { provider: "gemini", model: "gemini-3.6-flash" },
+    ]
+  },
 };
 
 const AGENT_LABELS = ["head","code","debug","reasoning","writing","design","search","review"];
@@ -1489,13 +1551,13 @@ function buildHistoryForAgent(msgsArray, excludeLastN = 1) {
   return recent.map(m => ({ role: m.role, content: sanitizeForHistory(m.content) }));
 }
 
-async function callAgentRaw(endpoint, agent, prompt, maxTokens, images, history) {
-  let effectiveSystem = agent.system;
+async function callAgentRaw(endpoint, model, system, prompt, maxTokens, images, history) {
+  let effectiveSystem = system;
   if (currentProjectInstructions) {
     effectiveSystem += `\n\nProject-specific instructions (always follow these for this project): ${currentProjectInstructions}`;
   }
   const body = {
-    model: agent.model,
+    model: model,
     system: effectiveSystem,
     prompt: prompt,
     max_tokens: maxTokens
@@ -1511,43 +1573,21 @@ async function callAgentRaw(endpoint, agent, prompt, maxTokens, images, history)
   return { ok: res.ok, data };
 }
 
-function parseRetryDelaySeconds(errorJson) {
-  try {
-    const msg = errorJson.error?.error?.message || "";
-    const match = msg.match(/try again in ([\d.]+)s/i);
-    if (match) return Math.min(parseFloat(match[1]) + 0.5, 30); // small buffer, cap at 30s
-  } catch (e) {}
-  return 5; // sensible default if we can't parse it
-}
-
-function isRateLimitError(errorJson) {
-  try {
-    return errorJson.error?.error?.code === "rate_limit_exceeded";
-  } catch (e) {
-    return false;
-  }
-}
-
 async function callAgent(role, prompt, maxTokens = null, images = null, history = null) {
   const agent = AGENTS[role];
   if (maxTokens === null) {
     maxTokens = (role === "code" || role === "debug" || role === "reasoning") ? 3000 : 1200;
   }
-  const endpoint = agent.provider === "openrouter" ? OPENROUTER_ENDPOINT : GROQ_ENDPOINT;
 
-  let attempt = 0;
-  while (attempt < 3) {
-    const { ok, data } = await callAgentRaw(endpoint, agent, prompt, maxTokens, images, history);
+  let lastError = null;
+  for (const providerConfig of agent.providers) {
+    const endpoint = PROVIDER_ENDPOINTS[providerConfig.provider];
+    const { ok, data } = await callAgentRaw(endpoint, providerConfig.model, agent.system, prompt, maxTokens, images, history);
     if (ok) return cleanThinking(data.content || "");
-
-    if (isRateLimitError(data) && attempt < 2) {
-      const waitSeconds = parseRetryDelaySeconds(data);
-      await new Promise(r => setTimeout(r, waitSeconds * 1000));
-      attempt++;
-      continue;
-    }
-    return `[Error] ${JSON.stringify(data)}`;
+    lastError = { provider: providerConfig.provider, error: data };
+    // any failure (rate limit, quota, model error, etc.) — fall through to the next provider immediately
   }
+  return `[Error] All providers failed for this task. Last error (${lastError.provider}): ${JSON.stringify(lastError.error)}`;
 }
 
 function cleanThinking(text) {
