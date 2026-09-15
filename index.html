@@ -1123,6 +1123,51 @@
     text-align: center;
   }
 
+  .skill-lib-category {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 14px 0 6px;
+  }
+  .skill-lib-category:first-child { margin-top: 0; }
+
+  .skill-lib-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 9px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .skill-lib-item:hover { background: var(--border); }
+  .skill-lib-item.already-added { opacity: 0.45; }
+  .skill-lib-item-text { min-width: 0; }
+  .skill-lib-item-name {
+    font-family: var(--sans);
+    font-size: 13px;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .skill-lib-item-desc {
+    font-family: var(--sans);
+    font-size: 11.5px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  .skill-badge {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    padding: 1px 6px;
+    border-radius: 10px;
+    margin-left: 6px;
+    text-transform: uppercase;
+  }
+
   .attach-chips {
     max-width: min(800px, 92vw);
     margin: 0 auto 8px;
@@ -1430,9 +1475,14 @@
 <div class="chats-page" id="skillsPageView" style="display:none;">
   <div class="chats-page-topbar">
     <button class="hamburger" id="skillsBackBtn">←</button>
+    <div class="chats-page-topbar-right">
+      <button class="topbar-icon-btn" id="uploadSkillBtn" title="Upload .md or .zip">📤</button>
+      <button class="topbar-icon-btn" id="importSystemSkillsBtn" title="Browse built-in skill library">📚</button>
+    </div>
   </div>
   <div class="chats-page-title">Skills</div>
   <div class="chats-page-list" id="skillsList"></div>
+  <input type="file" id="skillUploadInput" style="display:none;" accept=".md,.zip" multiple>
   <button class="new-chat-fab" id="newSkillFab">+ New skill</button>
 </div>
 
@@ -1449,7 +1499,27 @@
 
 <div class="skill-picker-popup" id="skillPickerPopup" style="display:none;"></div>
 
+<div class="chats-page" id="systemLibraryView" style="display:none;">
+  <div class="chats-page-topbar">
+    <button class="hamburger" id="systemLibraryBackBtn">←</button>
+    <span class="selected-count" id="systemLibrarySelectedCount">0 selected</span>
+  </div>
+  <div class="chats-page-title">Skill Library</div>
+  <div class="chats-page-list" id="systemLibraryList"></div>
+  <button class="new-chat-fab" id="importSelectedSkillsBtn">Import selected</button>
+</div>
+
+<div class="chats-page" id="systemSkillLibraryView" style="display:none;">
+  <div class="chats-page-topbar">
+    <button class="hamburger" id="systemSkillLibraryBackBtn">←</button>
+  </div>
+  <div class="chats-page-title">Skill Library</div>
+  <div class="chats-page-list" id="systemSkillLibraryList"></div>
+  <button class="new-chat-fab" id="importSelectedSkillsBtn">Import selected</button>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
 <script>
 // ---------------- CONFIG — fill these in ----------------
@@ -2279,6 +2349,58 @@ async function assignSelectedToProject(projectId) {
 }
 
 // ---------------- Skills ----------------
+
+const SYSTEM_SKILLS = [
+  { name: "accessibility", category: "web", description: "Build and audit interfaces usable by people with disabilities.", instructions: "# Accessibility\n\n## Purpose\nBuild and audit interfaces usable by people with disabilities, meeting WCAG standards.\n\n## When to Use\nNew UI components, page templates, forms, navigation, or any accessibility audit request.\n\n## Workflow\n1. Identify the interactive elements and content structure.\n2. Check semantic HTML is used before reaching for ARIA.\n3. Verify keyboard operability for every interactive element.\n4. Check color contrast against WCAG AA minimums.\n5. Verify screen-reader labeling (alt text, aria-label, form labels).\n6. Test focus order and visible focus states.\n\n## Rules\n- Never rely on color alone to convey information.\n- Never remove focus outlines without a replacement indicator.\n- Prefer native HTML elements over ARIA-heavy custom widgets.\n- Every image needs alt text; decorative images use empty alt.\n\n## Quality Standards\nInterface is fully operable by keyboard alone and passes WCAG AA contrast checks.\n\n## Output Format\nReport issues found, WCAG criterion violated, and the concrete fix for each." },
+  { name: "backend", category: "web", description: "Design reliable server-side application logic.", instructions: "# Backend Development\n\n## Purpose\nDesign reliable server-side application logic.\n\n## When to Use\nserver APIs, services, jobs, persistence, or business logic.\n\n## Workflow\n1. Define domain behavior.\n2. Establish input/output contracts.\n3. Validate inputs.\n4. Implement business logic.\n5. Handle errors and observability.\n6. Test integration boundaries.\n\n## Rules\n- Validate at trust boundaries.\n- Keep secrets out of source.\n- Make failure behavior explicit.\n\n## Quality Standards\nCorrect contracts, safe validation, predictable errors, and test coverage.\n\n## Output Format\nProvide endpoints/services, schemas, tests, and configuration requirements." },
+  { name: "frontend", category: "web", description: "Build accessible, responsive browser interfaces.", instructions: "# Frontend Development\n\n## Purpose\nBuild accessible, responsive browser interfaces.\n\n## When to Use\nweb UI development.\n\n## Workflow\n1. Define page states and interactions.\n2. Establish semantic structure.\n3. Implement responsive layout.\n4. Add interaction and state handling.\n5. Test keyboard, viewport, and error states.\n\n## Rules\n- Prefer semantic HTML.\n- Avoid unnecessary dependencies.\n- Keep UI behavior predictable.\n\n## Quality Standards\nResponsive, accessible, functional, and maintainable UI.\n\n## Output Format\nReturn complete implementation and relevant file structure." },
+  { name: "fullstack", category: "web", description: "Coordinate frontend, backend, data, and deployment concerns.", instructions: "# Full-Stack Development\n\n## Purpose\nCoordinate frontend, backend, data, and deployment concerns.\n\n## When to Use\nend-to-end application features.\n\n## Workflow\n1. Map user flow.\n2. Define data contracts.\n3. Implement backend behavior.\n4. Implement UI states.\n5. Connect and test boundaries.\n6. Verify production-like behavior.\n\n## Rules\n- Keep contracts explicit.\n- Test integration, not only isolated layers.\n\n## Quality Standards\nEnd-to-end behavior works across normal and failure states.\n\n## Output Format\nProvide architecture and implementation by layer." },
+  { name: "html-css", category: "web", description: "Create semantic, responsive, maintainable web markup and styles.", instructions: "# HTML and CSS\n\n## Purpose\nCreate semantic, responsive, maintainable web markup and styles.\n\n## When to Use\nHTML/CSS implementation or layout fixes.\n\n## Workflow\n1. Build semantic HTML.\n2. Establish layout model.\n3. Define reusable styles.\n4. Add responsive breakpoints only where needed.\n5. Test content overflow and keyboard focus.\n\n## Rules\n- Prefer modern CSS primitives.\n- Avoid brittle absolute positioning for normal layouts.\n\n## Quality Standards\nSemantic structure, responsive behavior, maintainable CSS.\n\n## Output Format\nReturn complete HTML/CSS snippets or files." },
+  { name: "javascript", category: "web", description: "Write reliable modern JavaScript for browser or runtime applications.", instructions: "# JavaScript\n\n## Purpose\nWrite reliable modern JavaScript for browser or runtime applications.\n\n## When to Use\nJavaScript logic, DOM work, or utilities.\n\n## Workflow\n1. Define data flow.\n2. Choose appropriate language features.\n3. Handle asynchronous behavior explicitly.\n4. Validate inputs.\n5. Test edge cases.\n\n## Rules\n- Avoid accidental global state.\n- Handle rejected promises.\n- Prefer readable control flow.\n\n## Quality Standards\nCorrect asynchronous behavior, clear state handling, and testability.\n\n## Output Format\nProvide runnable JavaScript with necessary imports or environment notes." },
+  { name: "nextjs", category: "web", description: "Build production-oriented Next.js applications.", instructions: "# Next.js\n\n## Purpose\nBuild production-oriented Next.js applications.\n\n## When to Use\nNext.js routing, rendering, server/client boundaries, or app features.\n\n## Workflow\n1. Identify route and rendering requirements.\n2. Choose server/client boundaries deliberately.\n3. Implement data and UI states.\n4. Handle errors and loading states.\n5. Verify build and navigation.\n\n## Rules\n- Follow the project's Next.js conventions.\n- Keep client code limited to browser-dependent behavior.\n\n## Quality Standards\nCorrect routing, rendering, data flow, and build behavior.\n\n## Output Format\nProvide the relevant Next.js files and configuration changes." },
+  { name: "react", category: "web", description: "Build composable React interfaces with predictable state and effects.", instructions: "# React\n\n## Purpose\nBuild composable React interfaces with predictable state and effects.\n\n## When to Use\nReact components, hooks, or application flows.\n\n## Workflow\n1. Define component responsibilities.\n2. Model state and props.\n3. Implement rendering states.\n4. Keep effects tied to external synchronization.\n5. Test user-visible behavior.\n\n## Rules\n- Avoid unnecessary state.\n- Prefer composition over giant components.\n- Keep keys stable and meaningful.\n\n## Quality Standards\nCorrect state flow, accessible UI, clean component boundaries.\n\n## Output Format\nProvide components and tests appropriate to the project." },
+  { name: "typescript", category: "web", description: "Use static types to improve correctness and maintainability.", instructions: "# TypeScript\n\n## Purpose\nUse static types to improve correctness and maintainability.\n\n## When to Use\nTypeScript applications, libraries, or type design.\n\n## Workflow\n1. Model domain types.\n2. Define public interfaces.\n3. Implement with strict typing.\n4. Handle unknown data at boundaries.\n5. Run type checking and tests.\n\n## Rules\n- Do not use `any` to hide uncertainty when a precise type is possible.\n- Keep types aligned with runtime behavior.\n\n## Quality Standards\nTypes meaningfully prevent invalid states without excessive complexity.\n\n## Output Format\nProvide typed implementation and required configuration." },
+  { name: "exam-preparation", category: "learning", description: "Prepare learners for assessed knowledge and problem solving.", instructions: "# Exam Preparation\n\n## Purpose\nPrepare learners for assessed knowledge and problem solving.\n\n## When to Use\nrevision, mock practice, and exam-oriented study.\n\n## Workflow\n1. Map syllabus to question types.\n2. Identify weak areas.\n3. Review concepts.\n4. Practice representative problems.\n5. Analyze errors.\n6. Repeat retrieval under time constraints.\n\n## Rules\n- Do not pretend to know undisclosed exam questions.\n- Emphasize understanding and practice.\n\n## Quality Standards\nCoverage of syllabus, targeted practice, and error-driven revision.\n\n## Output Format\nProvide topic priorities, practice sets, and review strategy." },
+  { name: "explaining-concepts", category: "learning", description: "Explain difficult ideas from first principles to practical understanding.", instructions: "# Concept Explanation\n\n## Purpose\nExplain difficult ideas from first principles to practical understanding.\n\n## When to Use\nwhen a concept is confusing or unfamiliar.\n\n## Workflow\n1. Define the idea simply.\n2. Explain prerequisites.\n3. Build the mechanism step by step.\n4. Give an intuitive analogy only if accurate.\n5. Show an example.\n6. Summarize the core rule.\n\n## Rules\n- Do not let analogies replace the actual concept.\n- Correct common misconceptions explicitly.\n\n## Quality Standards\nAccurate explanation that can be restated and applied.\n\n## Output Format\nUse definition, mechanism, example, common mistake, and summary." },
+  { name: "problem-solving", category: "learning", description: "Solve academic exercises while showing the reasoning needed to learn.", instructions: "# Educational Problem Solving\n\n## Purpose\nSolve academic exercises while showing the reasoning needed to learn.\n\n## When to Use\nspecific math, science, programming, or academic exercises.\n\n## Workflow\n1. Identify givens and target.\n2. Select the relevant principle.\n3. Work step by step.\n4. Check units, signs, and reasonableness.\n5. State the final result clearly.\n\n## Rules\n- Do not skip essential steps when they teach the method.\n- Check arithmetic and assumptions.\n\n## Quality Standards\nCorrect solution with a traceable method.\n\n## Output Format\nUse Given, Concept, Steps, Check, and Answer when appropriate." },
+  { name: "study-planning", category: "learning", description: "Create realistic study schedules around goals and constraints.", instructions: "# Study Planning\n\n## Purpose\nCreate realistic study schedules around goals and constraints.\n\n## When to Use\nexam preparation or long-term learning.\n\n## Workflow\n1. Identify syllabus and deadline.\n2. Estimate difficulty and current mastery.\n3. Prioritize high-value topics.\n4. Alternate learning and retrieval practice.\n5. Schedule review and practice.\n6. Adjust based on results.\n\n## Rules\n- Avoid impossible schedules.\n- Include recovery and flexibility.\n\n## Quality Standards\nSpecific, achievable, measurable plan.\n\n## Output Format\nProvide topics, sessions, goals, and review checkpoints." },
+  { name: "tutoring", category: "learning", description: "Teach concepts at the learner's current level.", instructions: "# Tutoring\n\n## Purpose\nTeach concepts at the learner's current level.\n\n## When to Use\nlearning a subject or solving educational problems.\n\n## Workflow\n1. Identify prior knowledge.\n2. Explain the smallest prerequisite.\n3. Demonstrate one example.\n4. Ask the learner to apply the idea when appropriate.\n5. Correct misconceptions precisely.\n6. Increase difficulty gradually.\n\n## Rules\n- Do not assume prerequisites.\n- Prefer understanding over answer dumping when teaching.\n\n## Quality Standards\nAccurate, level-appropriate explanations and visible progression.\n\n## Output Format\nUse short explanations, examples, checks, and corrections." },
+  { name: "brainstorming", category: "creative", description: "Generate and refine ideas around a defined goal.", instructions: "# Brainstorming\n\n## Purpose\nGenerate and refine ideas around a defined goal.\n\n## When to Use\nearly-stage creative or problem-solving work.\n\n## Workflow\n1. Define objective and constraints.\n2. Generate diverse options.\n3. Group related ideas.\n4. Evaluate against criteria.\n5. Select promising directions.\n\n## Rules\n- Separate generation from evaluation.\n- Avoid converging too early.\n\n## Quality Standards\nUseful diversity, clear criteria, and actionable selected ideas.\n\n## Output Format\nProvide grouped ideas with concise rationale." },
+  { name: "design-thinking", category: "creative", description: "Use user-centered problem framing and iterative solution design.", instructions: "# Design Thinking\n\n## Purpose\nUse user-centered problem framing and iterative solution design.\n\n## When to Use\ncomplex human-centered product or service problems.\n\n## Workflow\n1. Understand users and context.\n2. Define the problem.\n3. Generate alternatives.\n4. Prototype.\n5. Test.\n6. Iterate from evidence.\n\n## Rules\n- Do not claim user needs without evidence.\n- Treat prototypes as learning tools.\n\n## Quality Standards\nProblem definition and solution are connected through evidence.\n\n## Output Format\nProvide user context, problem, concepts, prototype, test, and iteration." },
+  { name: "ideation", category: "creative", description: "Turn problems into concrete concepts and experiments.", instructions: "# Ideation\n\n## Purpose\nTurn problems into concrete concepts and experiments.\n\n## When to Use\nfeature, product, content, or design ideation.\n\n## Workflow\n1. Frame the problem.\n2. Generate multiple concepts.\n3. Identify assumptions.\n4. Define lightweight experiments.\n5. Rank by value and feasibility.\n\n## Rules\n- Prefer testable concepts over vague ideas.\n\n## Quality Standards\nEach concept has a user value and a plausible validation path.\n\n## Output Format\nProvide concept, value, assumptions, experiment, and priority." },
+  { name: "prompt-engineering", category: "creative", description: "Design precise prompts for reliable model behavior.", instructions: "# Prompt Engineering\n\n## Purpose\nDesign precise prompts for reliable model behavior.\n\n## When to Use\nprompt creation, optimization, or evaluation.\n\n## Workflow\n1. Define desired behavior.\n2. Specify context and constraints.\n3. Define output schema.\n4. Add examples only when useful.\n5. Add evaluation criteria.\n6. Test ambiguous and adversarial cases.\n\n## Rules\n- Avoid unnecessary prompt complexity.\n- Do not rely on hidden assumptions.\n\n## Quality Standards\nPrompt is explicit, testable, robust to common ambiguity.\n\n## Output Format\nProvide prompt, variables, usage instructions, and evaluation criteria." },
+  { name: "ui-ux", category: "creative", description: "Design usable interfaces and coherent user experiences.", instructions: "# UI/UX Design\n\n## Purpose\nDesign usable interfaces and coherent user experiences.\n\n## When to Use\ninterface flows, wireframes, interaction design, or UX critique.\n\n## Workflow\n1. Define user goal.\n2. Map task flow.\n3. Establish information hierarchy.\n4. Design states and feedback.\n5. Check accessibility.\n6. Test usability assumptions.\n\n## Rules\n- Prioritize task completion over decoration.\n- Make system status and errors understandable.\n\n## Quality Standards\nClear flow, predictable interaction, accessibility, and visual hierarchy.\n\n## Output Format\nProvide flow, screen structure, interaction states, and rationale." },
+  { name: "academic-writing", category: "writing", description: "Produce structured academic prose and argumentation.", instructions: "# Academic Writing\n\n## Purpose\nProduce structured academic prose and argumentation.\n\n## When to Use\nWhen preparing essays, reports, literature reviews, or assignment responses.\n\n## Workflow\n1. Identify thesis and scope.\n2. Build an evidence-backed argument.\n3. Organize claims logically.\n4. Distinguish evidence, interpretation, and conclusion.\n5. Check citations and attribution requirements.\n\n## Rules\n- Do not fabricate citations or sources.\n- Follow the requested citation style.\n- Avoid unsupported certainty.\n\n## Quality Standards\nClear thesis, logical argument, accurate attribution, and appropriate academic tone.\n\n## Output Format\nReturn the requested academic format with citations only when supported." },
+  { name: "copywriting", category: "writing", description: "Write persuasive copy for a defined audience and objective.", instructions: "# Copywriting\n\n## Purpose\nWrite persuasive copy for a defined audience and objective.\n\n## When to Use\nWhen creating landing-page copy, product messaging, advertisements, or promotional text.\n\n## Workflow\n1. Define audience and conversion goal.\n2. Identify value proposition.\n3. Lead with the strongest benefit.\n4. Address objections.\n5. Use a clear call to action.\n6. Remove vague claims.\n\n## Rules\n- Do not make deceptive claims.\n- Separate factual claims from marketing language.\n- Match the requested brand voice.\n\n## Quality Standards\nSpecific value proposition, credible persuasion, scannability, and clear CTA.\n\n## Output Format\nDeliver copy in the exact channel structure requested." },
+  { name: "creative-writing", category: "writing", description: "Create original imaginative prose with deliberate style.", instructions: "# Creative Writing\n\n## Purpose\nCreate original imaginative prose with deliberate style.\n\n## When to Use\nWhen the user requests fiction, scenes, concepts, or imaginative prose.\n\n## Workflow\n1. Establish premise, voice, audience, and constraints.\n2. Choose a coherent point of view.\n3. Build scenes around concrete details and purposeful conflict.\n4. Maintain continuity.\n5. Revise for rhythm and originality.\n\n## Rules\n- Keep characters and events internally consistent.\n- Avoid derivative copying of living authors' distinctive styles.\n- Do not present invented events as factual.\n\n## Quality Standards\nOriginality, coherent voice, strong scene logic, and satisfying progression.\n\n## Output Format\nReturn the requested creative work in the requested length and format." },
+  { name: "general-writing", category: "writing", description: "Produce clear, purposeful prose for the intended audience.", instructions: "# General Writing\n\n## Purpose\nProduce clear, purposeful prose for the intended audience.\n\n## When to Use\nWhen the user needs an original article, explanation, message, or general prose.\n\n## Workflow\n1. Identify audience, purpose, tone, and length.\n2. Establish the main point.\n3. Organize ideas logically.\n4. Draft directly.\n5. Edit for clarity, flow, precision, and redundancy.\n6. Verify that every paragraph serves the purpose.\n\n## Rules\n- Prefer concrete language.\n- Avoid filler and repetition.\n- Match vocabulary to the audience.\n- Do not invent facts presented as facts.\n\n## Quality Standards\nClear structure, natural transitions, consistent tone, and direct relevance.\n\n## Output Format\nDeliver polished prose with headings or paragraphs appropriate to the format." },
+  { name: "professional-writing", category: "writing", description: "Create concise, credible workplace communication.", instructions: "# Professional Writing\n\n## Purpose\nCreate concise, credible workplace communication.\n\n## When to Use\nWhen drafting business emails, reports, notices, proposals, or workplace messages.\n\n## Workflow\n1. Define recipient and desired action.\n2. Put the purpose early.\n3. Organize supporting information.\n4. Use professional, neutral language.\n5. End with a specific next step.\n\n## Rules\n- Be respectful without excessive politeness.\n- Avoid jargon unless the audience uses it.\n- Never fabricate commitments, dates, or credentials.\n\n## Quality Standards\nActionable, concise, professional, and audience-appropriate.\n\n## Output Format\nUse the format required by the medium: email, memo, report, or message." },
+  { name: "proofreading", category: "writing", description: "Find and correct language and presentation errors.", instructions: "# Proofreading\n\n## Purpose\nFind and correct language and presentation errors.\n\n## When to Use\nWhen text needs grammar, spelling, punctuation, usage, or consistency correction.\n\n## Workflow\n1. Read for meaning.\n2. Correct spelling and grammar.\n3. Check punctuation and capitalization.\n4. Check terminology and consistency.\n5. Read once for naturalness.\n\n## Rules\n- Preserve meaning and voice.\n- Do not rewrite unnecessarily.\n- Flag ambiguous claims rather than silently changing their meaning.\n\n## Quality Standards\nCorrect, consistent, readable text.\n\n## Output Format\nProvide the corrected text; optionally list material corrections when requested." },
+  { name: "rewriting", category: "writing", description: "Improve supplied text while preserving its intended meaning.", instructions: "# Rewriting\n\n## Purpose\nImprove supplied text while preserving its intended meaning.\n\n## When to Use\nWhen the user asks to rewrite, improve, simplify, shorten, or expand existing text.\n\n## Workflow\n1. Identify the original intent.\n2. Preserve essential facts and meaning.\n3. Apply the requested tone or style.\n4. Improve structure and wording.\n5. Compare the revision against the source.\n\n## Rules\n- Do not introduce unsupported facts.\n- Preserve names, numbers, and commitments unless asked to change them.\n- Do not over-edit away the user's voice when preservation is requested.\n\n## Quality Standards\nMeaning preserved; requested changes clearly achieved; grammar and flow improved.\n\n## Output Format\nReturn the complete revised artifact, not commentary about individual edits." },
+  { name: "storytelling", category: "writing", description: "Design compelling narratives with structure and pacing.", instructions: "# Storytelling\n\n## Purpose\nDesign compelling narratives with structure and pacing.\n\n## When to Use\nWhen developing stories, scripts, narratives, or story concepts.\n\n## Workflow\n1. Define protagonist, goal, stakes, obstacles, and change.\n2. Establish a progression of complications.\n3. Control pacing with scene and summary.\n4. Resolve major narrative questions.\n5. Check character motivation and continuity.\n\n## Rules\n- Every major event should have a narrative function.\n- Avoid arbitrary twists that contradict established information.\n\n## Quality Standards\nClear causal progression, motivated characters, controlled pacing, and coherent ending.\n\n## Output Format\nUse scenes, beats, or prose according to the requested medium." },
+  { name: "technical-writing", category: "writing", description: "Explain technical subjects precisely and operationally.", instructions: "# Technical Writing\n\n## Purpose\nExplain technical subjects precisely and operationally.\n\n## When to Use\nWhen creating documentation, technical explanations, specifications, or manuals.\n\n## Workflow\n1. Identify technical audience and task.\n2. Define terminology.\n3. State prerequisites.\n4. Present procedures in dependency order.\n5. Include examples and failure cases.\n6. Verify commands, names, and assumptions.\n\n## Rules\n- Distinguish facts from recommendations.\n- Never invent API behavior.\n- Use exact identifiers in code and commands.\n\n## Quality Standards\nTechnically precise, reproducible, scannable, and complete enough for the task.\n\n## Output Format\nUse headings, steps, code blocks, tables, and warnings where they improve execution." },
+  { name: "architecture", category: "coding", description: "Design robust system boundaries, interfaces, and dependencies.", instructions: "# Software Architecture\n\n## Purpose\nDesign robust system boundaries, interfaces, and dependencies.\n\n## When to Use\nnew systems, major changes, or architectural decisions.\n\n## Workflow\n1. Define requirements and constraints.\n2. Identify components and responsibilities.\n3. Define interfaces and data flow.\n4. Evaluate alternatives.\n5. Identify failure modes.\n6. Select the simplest viable architecture.\n\n## Rules\n- Make trade-offs explicit.\n- Avoid premature infrastructure.\n- Separate current requirements from future speculation.\n\n## Quality Standards\nClear boundaries, explicit trade-offs, manageable complexity, and operational realism.\n\n## Output Format\nProvide architecture, components, interfaces, trade-offs, and implementation sequence." },
+  { name: "code-generation", category: "coding", description: "Generate production-appropriate code from explicit requirements.", instructions: "# Code Generation\n\n## Purpose\nGenerate production-appropriate code from explicit requirements.\n\n## When to Use\nthe user asks for code or an implementation.\n\n## Workflow\n1. Extract inputs, outputs, constraints, and environment.\n2. Select idiomatic constructs.\n3. Implement the smallest complete solution.\n4. Handle required errors and edge cases.\n5. Test representative cases.\n\n## Rules\n- Do not invent unavailable dependencies or APIs.\n- State assumptions that affect execution.\n- Keep code runnable.\n\n## Quality Standards\nCorrect, idiomatic, self-contained, and appropriately scoped.\n\n## Output Format\nReturn working code first, followed by only necessary usage notes." },
+  { name: "code-review", category: "coding", description: "Evaluate code for correctness, maintainability, security, and defects.", instructions: "# Code Review\n\n## Purpose\nEvaluate code for correctness, maintainability, security, and defects.\n\n## When to Use\nreviewing a patch, file, pull request, or snippet.\n\n## Workflow\n1. Understand intended behavior.\n2. Inspect correctness and edge cases.\n3. Inspect security and performance.\n4. Check maintainability and tests.\n5. Rank findings by severity.\n6. Give concrete fixes.\n\n## Rules\n- Prioritize real defects over style preferences.\n- Cite exact locations when available.\n- Do not claim an issue without evidence.\n\n## Quality Standards\nFindings are actionable, prioritized, and tied to observed code.\n\n## Output Format\nUse severity, location, issue, impact, and recommended fix." },
+  { name: "debugging", category: "coding", description: "Systematically identify, isolate, fix, and verify software defects.", instructions: "# Debugging\n\n## Purpose\nSystematically identify, isolate, fix, and verify software defects.\n\n## When to Use\nruntime errors, test failures, incorrect output, or unexpected behavior.\n\n## Workflow\n1. Reproduce the issue.\n2. Collect exact errors and inputs.\n3. Establish expected versus actual behavior.\n4. Form hypotheses.\n5. Test hypotheses systematically.\n6. Fix the root cause.\n7. Run regression tests.\n\n## Rules\n- Do not guess when evidence can be collected.\n- Avoid unrelated changes.\n- Never claim a fix without verification.\n\n## Quality Standards\nRoot cause supported by evidence and fix verified against the failure.\n\n## Output Format\nReport problem, root cause, fix, verification, and remaining risks." },
+  { name: "documentation", category: "coding", description: "Create accurate documentation for software behavior and usage.", instructions: "# Code Documentation\n\n## Purpose\nCreate accurate documentation for software behavior and usage.\n\n## When to Use\nREADME files, API docs, setup guides, architecture notes, or inline documentation.\n\n## Workflow\n1. Identify intended audience.\n2. Document prerequisites.\n3. Explain installation and usage.\n4. Document important interfaces and limitations.\n5. Validate examples against actual behavior.\n\n## Rules\n- Documentation must match implementation.\n- Avoid documenting obvious internals unless useful.\n- Never invent supported behavior.\n\n## Quality Standards\nAccurate, executable examples and clear navigation.\n\n## Output Format\nUse Markdown structure appropriate to the project." },
+  { name: "git", category: "coding", description: "Use Git safely for version control and collaboration.", instructions: "# Git Workflow\n\n## Purpose\nUse Git safely for version control and collaboration.\n\n## When to Use\ncommits, branches, merges, rebases, conflict resolution, or history cleanup.\n\n## Workflow\n1. Inspect repository state.\n2. Understand branch and remote context.\n3. Make focused changes.\n4. Review the diff.\n5. Commit logically.\n6. Verify history and working tree.\n\n## Rules\n- Never discard user work without explicit authorization.\n- Review diffs before destructive history operations.\n- Use meaningful commit messages.\n\n## Quality Standards\nClean diff, recoverable history, and no accidental changes.\n\n## Output Format\nProvide exact commands and explain destructive operations before use." },
+  { name: "performance", category: "coding", description: "Diagnose and improve software performance using evidence.", instructions: "# Performance Engineering\n\n## Purpose\nDiagnose and improve software performance using evidence.\n\n## When to Use\nslow applications, high resource use, latency, throughput, or memory problems.\n\n## Workflow\n1. Define performance target.\n2. Measure baseline.\n3. Profile bottlenecks.\n4. Form a hypothesis.\n5. Optimize the dominant cost.\n6. Benchmark again.\n7. Check correctness.\n\n## Rules\n- Measure before optimizing.\n- Optimize bottlenecks, not aesthetics.\n- Report benchmark conditions.\n\n## Quality Standards\nImprovements are demonstrated with comparable measurements and no functional regression.\n\n## Output Format\nProvide baseline, bottleneck, change, measurements, and trade-offs." },
+  { name: "refactoring", category: "coding", description: "Improve internal code structure without changing intended behavior.", instructions: "# Refactoring\n\n## Purpose\nImprove internal code structure without changing intended behavior.\n\n## When to Use\ncode smells, duplicated logic, complex modules, or maintainability work.\n\n## Workflow\n1. Establish behavior with tests.\n2. Identify one structural problem.\n3. Make a small transformation.\n4. Run tests.\n5. Repeat only when justified.\n6. Compare behavior before and after.\n\n## Rules\n- Preserve public behavior.\n- Avoid combining unrelated feature work.\n- Prefer incremental refactors.\n\n## Quality Standards\nBehavior preserved and structure measurably improved.\n\n## Output Format\nDescribe the transformation and show the resulting code or patch." },
+  { name: "security", category: "coding", description: "Identify and reduce software security risks.", instructions: "# Software Security\n\n## Purpose\nIdentify and reduce software security risks.\n\n## When to Use\nsecurity reviews, secure coding, threat modeling, or vulnerability remediation.\n\n## Workflow\n1. Identify assets and trust boundaries.\n2. Identify threats and attack surfaces.\n3. Inspect authentication, authorization, input handling, secrets, and dependencies.\n4. Prioritize realistic risks.\n5. Apply least-privilege mitigations.\n6. Verify fixes.\n\n## Rules\n- Do not expose secrets.\n- Prefer defensive guidance.\n- Do not provide instructions that enable harmful intrusion.\n\n## Quality Standards\nRisks are evidence-based, prioritized, and mitigations are practical.\n\n## Output Format\nProvide risk, impact, affected component, mitigation, and verification." },
+  { name: "software-engineering", category: "coding", description: "Design and implement maintainable software systems.", instructions: "# Software Engineering\n\n## Purpose\nDesign and implement maintainable software systems.\n\n## When to Use\nnew features, fixes, services, libraries, or application changes.\n\n## Workflow\n1. Clarify behavior and interfaces.\n2. Inspect existing architecture.\n3. Define a minimal design.\n4. Implement in small units.\n5. Add tests.\n6. Run verification.\n7. Document material decisions.\n\n## Rules\n- Preserve existing contracts unless change is required.\n- Prefer simple designs over speculative abstractions.\n- Keep changes focused.\n\n## Quality Standards\nCorrect behavior, maintainability, testability, and compatibility.\n\n## Output Format\nProvide implementation plus tests and relevant documentation." },
+  { name: "testing", category: "coding", description: "Design tests that expose defects and protect behavior.", instructions: "# Software Testing\n\n## Purpose\nDesign tests that expose defects and protect behavior.\n\n## When to Use\nunit, integration, end-to-end, regression, or test strategy work.\n\n## Workflow\n1. Define behavior under test.\n2. Identify happy paths and boundaries.\n3. Add failure and edge cases.\n4. Isolate dependencies appropriately.\n5. Run tests and inspect failures.\n6. Remove flaky or redundant coverage.\n\n## Rules\n- Test behavior rather than implementation details when possible.\n- Keep tests deterministic.\n- Do not weaken assertions just to pass.\n\n## Quality Standards\nTests are meaningful, deterministic, and cover important failure modes.\n\n## Output Format\nProvide test cases, test code where requested, and verification results." },
+  { name: "data-analysis", category: "data", description: "Turn structured data into defensible findings.", instructions: "# Data Analysis\n\n## Purpose\nTurn structured data into defensible findings.\n\n## When to Use\nexploring datasets, trends, relationships, or metrics.\n\n## Workflow\n1. Inspect schema and quality.\n2. Define analytical question.\n3. Clean only justified issues.\n4. Explore distributions and relationships.\n5. Select appropriate analysis.\n6. Validate results.\n7. Communicate limitations.\n\n## Rules\n- Never silently alter raw data.\n- Distinguish correlation from causation.\n- Track assumptions and missingness.\n\n## Quality Standards\nReproducible analysis, appropriate methods, and transparent limitations.\n\n## Output Format\nProvide methods, findings, evidence, and limitations." },
+  { name: "data-cleaning", category: "data", description: "Prepare data for analysis while preserving provenance.", instructions: "# Data Cleaning\n\n## Purpose\nPrepare data for analysis while preserving provenance.\n\n## When to Use\nmissing values, duplicates, inconsistent formats, or malformed records.\n\n## Workflow\n1. Profile quality problems.\n2. Define cleaning rules.\n3. Preserve original data.\n4. Apply transformations.\n5. Validate outputs.\n6. Record changes.\n\n## Rules\n- Never delete records without a documented rule.\n- Do not infer values without justification.\n\n## Quality Standards\nCleaning rules are reproducible and changes are auditable.\n\n## Output Format\nReport issues, transformations, validation, and remaining quality risks." },
+  { name: "spreadsheets", category: "data", description: "Design and analyze reliable spreadsheets.", instructions: "# Spreadsheet Analysis\n\n## Purpose\nDesign and analyze reliable spreadsheets.\n\n## When to Use\nExcel-like calculations, formulas, models, or data tables.\n\n## Workflow\n1. Define inputs and outputs.\n2. Establish consistent structure.\n3. Use explicit formulas.\n4. Validate inputs.\n5. Check totals and edge cases.\n6. Document assumptions.\n\n## Rules\n- Avoid hidden hard-coded constants in formulas.\n- Keep raw inputs separate from derived values when practical.\n\n## Quality Standards\nAuditable formulas, clear structure, and correct calculations.\n\n## Output Format\nProvide table structure, formulas, and validation checks." },
+  { name: "statistics", category: "data", description: "Apply statistical reasoning appropriately.", instructions: "# Statistics\n\n## Purpose\nApply statistical reasoning appropriately.\n\n## When to Use\ndescriptive statistics, inference, probability, or experimental analysis.\n\n## Workflow\n1. Identify population and sample.\n2. Define variables and assumptions.\n3. Choose an appropriate method.\n4. Calculate or estimate results.\n5. Interpret uncertainty.\n6. Check assumptions.\n\n## Rules\n- Do not misuse p-values.\n- Report effect size and uncertainty when relevant.\n- Avoid causal claims from observational association alone.\n\n## Quality Standards\nMethod matches question and assumptions; interpretation matches result.\n\n## Output Format\nState method, result, interpretation, and uncertainty." },
+  { name: "visualization", category: "data", description: "Choose and design charts that communicate data accurately.", instructions: "# Data Visualization\n\n## Purpose\nChoose and design charts that communicate data accurately.\n\n## When to Use\ncharts, dashboards, or visual analysis.\n\n## Workflow\n1. Identify analytical question.\n2. Choose encoding appropriate to data type.\n3. Establish honest scales.\n4. Add labels and context.\n5. Highlight uncertainty when relevant.\n6. Test readability.\n\n## Rules\n- Never distort comparisons with misleading scales.\n- Avoid decorative elements that obscure data.\n\n## Quality Standards\nAccurate encoding, readable labels, and appropriate visual hierarchy.\n\n## Output Format\nSpecify chart type, encodings, annotations, and accessibility considerations." },
+  { name: "error-recovery", category: "meta", description: "Recover systematically when a workflow fails or produces unexpected results.", instructions: "# Error Recovery\n\n## Purpose\nRecover systematically when a workflow fails or produces unexpected results.\n\n## When to Use\ntool failures, failed tests, contradictory requirements, or incomplete outputs.\n\n## Workflow\n1. Stop at the failure boundary.\n2. Preserve evidence.\n3. Identify the failure class.\n4. Determine whether retry, correction, rollback, or clarification is appropriate.\n5. Apply the smallest recovery.\n6. Verify recovery.\n\n## Rules\n- Do not repeatedly retry unchanged failing actions.\n- Never hide failures.\n- Ask for clarification when the missing information is essential.\n\n## Quality Standards\nFailure is explained, recovery is targeted, and the result is verified.\n\n## Output Format\nReport failure, cause, recovery action, and verification." },
+  { name: "multi-skill-orchestration", category: "meta", description: "Coordinate multiple skills without losing requirements or ownership.", instructions: "# Multi-Skill Orchestration\n\n## Purpose\nCoordinate multiple skills without losing requirements or ownership.\n\n## When to Use\ncomplex tasks spanning writing, coding, research, design, or analysis.\n\n## Workflow\n1. Decompose the task.\n2. Assign each subtask to a capability.\n3. Define interfaces between subtasks.\n4. Execute in dependency order.\n5. Integrate outputs.\n6. Run a final cross-skill quality check.\n\n## Rules\n- Preserve shared requirements across subtasks.\n- Do not duplicate work.\n- Reconcile conflicting outputs explicitly.\n\n## Quality Standards\nIntegrated result is coherent and satisfies the original objective.\n\n## Output Format\nProvide final integrated deliverable plus important assumptions." },
+  { name: "self-review", category: "meta", description: "Critically inspect a draft or solution before delivery.", instructions: "# Self Review\n\n## Purpose\nCritically inspect a draft or solution before delivery.\n\n## When to Use\nimportant outputs requiring quality assurance.\n\n## Workflow\n1. Re-read requirements.\n2. Check correctness.\n3. Check completeness.\n4. Search for unsupported claims.\n5. Check formatting and usability.\n6. Correct defects.\n7. Re-check.\n\n## Rules\n- Do not invent evidence during review.\n- Fix material defects rather than merely mentioning them.\n\n## Quality Standards\nReview catches substantive errors and confirms requirement coverage.\n\n## Output Format\nReturn the corrected artifact and concise verification notes when appropriate." },
+  { name: "skill-selection", category: "meta", description: "Select the smallest set of skills needed for a task.", instructions: "# Skill Selection\n\n## Purpose\nSelect the smallest set of skills needed for a task.\n\n## When to Use\nwhen multiple capabilities could apply.\n\n## Workflow\n1. Identify the user's goal.\n2. Match required capabilities.\n3. Select a primary skill.\n4. Add supporting skills only when dependencies justify them.\n5. Avoid redundant skill activation.\n\n## Rules\n- Prefer the smallest sufficient skill set.\n- Do not activate unrelated skills.\n\n## Quality Standards\nSelected skills directly correspond to the task and do not conflict.\n\n## Output Format\nState the selected skill(s) and why when useful." }
+];
+
 let allSkills = [];
 let activeSkill = null;
 let editingSkillId = null;
@@ -2291,14 +2413,14 @@ async function loadSkills(uid) {
 function renderSkillsList() {
   const list = document.getElementById("skillsList");
   if (!allSkills.length) {
-    list.innerHTML = `<div class="artifacts-empty">No skills yet. Create one — a reusable instruction set you can turn on for any message with /skillname.</div>`;
+    list.innerHTML = `<div class="artifacts-empty">No skills yet. Create one, or browse the built-in library (📚) — a reusable instruction set you can turn on for any message with /skillname.</div>`;
     return;
   }
   list.innerHTML = "";
   allSkills.forEach(s => {
     const row = document.createElement("div");
     row.className = "project-item-row";
-    row.innerHTML = `<span>🧩 ${escapeHtml(s.name)}</span><span style="color:var(--text-dim); font-size:11px;">${formatRelativeDate(s.updated_at)}</span>`;
+    row.innerHTML = `<span>🧩 ${escapeHtml(s.name)}${s.is_system ? '<span class="skill-badge">library</span>' : ''}</span><span style="color:var(--text-dim); font-size:11px;">${formatRelativeDate(s.updated_at)}</span>`;
     row.onclick = () => openEditSkill(s);
     list.appendChild(row);
   });
@@ -2451,6 +2573,141 @@ function extractSlashSkill(text) {
   if (!skill) return null;
   return { skill, remainingText: match[2] };
 }
+
+// ---------------- System skill library browser ----------------
+let selectedLibrarySkills = new Set();
+
+function renderSystemLibrary() {
+  selectedLibrarySkills.clear();
+  document.getElementById("systemLibrarySelectedCount").textContent = "0 selected";
+  const list = document.getElementById("systemLibraryList");
+  const byCategory = {};
+  SYSTEM_SKILLS.forEach(s => {
+    if (!byCategory[s.category]) byCategory[s.category] = [];
+    byCategory[s.category].push(s);
+  });
+
+  list.innerHTML = "";
+  Object.keys(byCategory).sort().forEach(cat => {
+    const header = document.createElement("div");
+    header.className = "skill-lib-category";
+    header.textContent = cat;
+    list.appendChild(header);
+
+    byCategory[cat].forEach(s => {
+      const alreadyAdded = allSkills.some(x => x.name === s.name);
+      const row = document.createElement("div");
+      row.className = "skill-lib-item" + (alreadyAdded ? " already-added" : "");
+      row.innerHTML = `
+        <div class="conv-checkbox" data-name="${escapeHtml(s.name)}"></div>
+        <div class="skill-lib-item-text">
+          <div class="skill-lib-item-name">🧩 ${escapeHtml(s.name)}${alreadyAdded ? '<span class="skill-badge">added</span>' : ''}</div>
+          <div class="skill-lib-item-desc">${escapeHtml(s.description)}</div>
+        </div>
+      `;
+      if (!alreadyAdded) {
+        row.onclick = () => {
+          const checkbox = row.querySelector(".conv-checkbox");
+          if (selectedLibrarySkills.has(s.name)) {
+            selectedLibrarySkills.delete(s.name);
+            checkbox.classList.remove("checked");
+            checkbox.textContent = "";
+          } else {
+            selectedLibrarySkills.add(s.name);
+            checkbox.classList.add("checked");
+            checkbox.textContent = "✓";
+          }
+          document.getElementById("systemLibrarySelectedCount").textContent = `${selectedLibrarySkills.size} selected`;
+        };
+      }
+      list.appendChild(row);
+    });
+  });
+}
+
+document.getElementById("importSystemSkillsBtn").onclick = () => {
+  renderSystemLibrary();
+  document.getElementById("systemLibraryView").style.display = "flex";
+};
+document.getElementById("systemLibraryBackBtn").onclick = () => {
+  document.getElementById("systemLibraryView").style.display = "none";
+};
+
+document.getElementById("importSelectedSkillsBtn").onclick = async () => {
+  if (!selectedLibrarySkills.size) return;
+  const toImport = SYSTEM_SKILLS.filter(s => selectedLibrarySkills.has(s.name));
+  const rows = toImport.map(s => ({
+    user_id: userId, name: s.name, instructions: s.instructions, is_system: true
+  }));
+  const { data, error } = await sb.from("skills").insert(rows).select();
+  if (error) { showError("Failed to import skills: " + error.message); return; }
+  allSkills = [...(data || []), ...allSkills];
+  document.getElementById("systemLibraryView").style.display = "none";
+  renderSkillsList();
+};
+
+// ---------------- Upload skills from .md / .zip ----------------
+function parseSkillMarkdown(content, fallbackName) {
+  const m = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!m) {
+    return { name: fallbackName, instructions: content.trim() };
+  }
+  const [, frontmatter, body] = m;
+  let name = fallbackName;
+  frontmatter.split("\n").forEach(line => {
+    const idx = line.indexOf(":");
+    if (idx === -1) return;
+    const key = line.slice(0, idx).trim();
+    const val = line.slice(idx + 1).trim();
+    if (key === "name" && val) name = val;
+  });
+  return { name, instructions: body.trim() };
+}
+
+document.getElementById("uploadSkillBtn").onclick = () => {
+  document.getElementById("skillUploadInput").click();
+};
+
+document.getElementById("skillUploadInput").addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files);
+  e.target.value = "";
+  const parsedSkills = [];
+
+  for (const file of files) {
+    try {
+      if (file.name.toLowerCase().endsWith(".zip")) {
+        const zip = await JSZip.loadAsync(file);
+        for (const [path, entry] of Object.entries(zip.files)) {
+          if (entry.dir || !path.toLowerCase().endsWith(".md")) continue;
+          const baseName = path.split("/").pop().replace(/\.md$/i, "");
+          if (baseName.toLowerCase() === "readme" || baseName.toLowerCase() === "skill-index") continue;
+          const content = await entry.async("string");
+          parsedSkills.push(parseSkillMarkdown(content, baseName));
+        }
+      } else if (file.name.toLowerCase().endsWith(".md")) {
+        const content = await file.text();
+        const baseName = file.name.replace(/\.md$/i, "");
+        parsedSkills.push(parseSkillMarkdown(content, baseName));
+      }
+    } catch (err) {
+      showError(`Failed to parse ${file.name}: ${err.message}`);
+    }
+  }
+
+  if (!parsedSkills.length) {
+    showError("No valid .md skills found in the uploaded file(s).");
+    return;
+  }
+
+  const rows = parsedSkills
+    .filter(s => s.name && s.instructions)
+    .map(s => ({ user_id: userId, name: s.name.toLowerCase().replace(/\s+/g, "-"), instructions: s.instructions, is_system: false }));
+
+  const { data, error } = await sb.from("skills").insert(rows).select();
+  if (error) { showError("Failed to import uploaded skills: " + error.message); return; }
+  allSkills = [...(data || []), ...allSkills];
+  renderSkillsList();
+});
 
 async function createConversation(uid, title = "New chat") {
   const { data: conv } = await sb.from("conversations").insert({ user_id: uid, title }).select().single();
