@@ -1587,6 +1587,19 @@ function showError(msg) {
   banner.textContent = "ERROR: " + msg;
 }
 
+function showInfo(msg) {
+  let banner = document.getElementById("infoBanner");
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.id = "infoBanner";
+    banner.style.cssText = "position:fixed;top:0;left:0;right:0;background:#E8A33D;color:#17140F;font-family:monospace;font-size:12px;padding:10px;z-index:9999;white-space:pre-wrap;";
+    document.body.prepend(banner);
+  }
+  banner.textContent = msg;
+  clearTimeout(banner._hideTimer);
+  banner._hideTimer = setTimeout(() => { banner.remove(); }, 4000);
+}
+
 window.onerror = function(msg, url, line) {
   showError(msg + " (line " + line + ")");
   return false;
@@ -2699,14 +2712,39 @@ document.getElementById("skillUploadInput").addEventListener("change", async (e)
     return;
   }
 
-  const rows = parsedSkills
+  const existingNames = new Set(allSkills.map(s => s.name));
+  const normalized = parsedSkills
     .filter(s => s.name && s.instructions)
-    .map(s => ({ user_id: userId, name: s.name.toLowerCase().replace(/\s+/g, "-"), instructions: s.instructions, is_system: false }));
+    .map(s => ({ name: s.name.toLowerCase().replace(/\s+/g, "-"), instructions: s.instructions }));
 
-  const { data, error } = await sb.from("skills").insert(rows).select();
+  const seenInThisBatch = new Set();
+  const toInsert = [];
+  let skippedCount = 0;
+
+  for (const s of normalized) {
+    if (existingNames.has(s.name) || seenInThisBatch.has(s.name)) {
+      skippedCount++;
+      continue;
+    }
+    seenInThisBatch.add(s.name);
+    toInsert.push({ user_id: userId, name: s.name, instructions: s.instructions, is_system: false });
+  }
+
+  if (!toInsert.length) {
+    showError(`All ${skippedCount} skill(s) in this upload already exist — nothing new to add.`);
+    return;
+  }
+
+  const { data, error } = await sb.from("skills").insert(toInsert).select();
   if (error) { showError("Failed to import uploaded skills: " + error.message); return; }
   allSkills = [...(data || []), ...allSkills];
   renderSkillsList();
+
+  if (skippedCount > 0) {
+    showInfo(`Added ${toInsert.length} new skill(s). Skipped ${skippedCount} already-existing skill(s).`);
+  } else {
+    showInfo(`Added ${toInsert.length} new skill(s).`);
+  }
 });
 
 async function createConversation(uid, title = "New chat") {
