@@ -1762,6 +1762,23 @@
   </div>
 </div>
 
+<div class="hint-popup-overlay" id="ghApprovalOverlay" style="display:none; z-index:200;">
+  <div class="hint-popup">
+    <div class="hint-popup-title">🔗 <span id="ghApprovalRole"></span> agent wants to write to GitHub</div>
+    <div id="ghApprovalSummary" style="font-family:var(--mono); font-size:12.5px; color:var(--text); line-height:1.6; margin-bottom:12px; max-height:260px; overflow-y:auto;"></div>
+    <button class="hint-popup-close" id="ghApprovalApproveBtn">Approve</button>
+    <button class="hint-popup-close" id="ghApprovalDenyBtn" style="background:transparent; color:var(--error); border:1px solid var(--error); margin-top:8px;">Deny</button>
+  </div>
+</div>
+
+<div id="ghActivityLog" style="display:none; position:fixed; left:12px; bottom:78px; width:min(300px, calc(100vw - 24px)); max-height:180px; overflow-y:auto; background:var(--panel); border:1px solid var(--border); border-radius:8px; z-index:60; font-family:var(--mono); font-size:11px;">
+  <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-dim); position:sticky; top:0; background:var(--panel);">
+    <span>🔗 GitHub activity</span>
+    <span id="ghActivityCloseBtn" style="cursor:pointer;">✕</span>
+  </div>
+  <div id="ghActivityLines" style="padding:6px 10px;"></div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
@@ -1957,6 +1974,51 @@ function buildHistoryForAgent(msgsArray, excludeLastN = 1) {
   return recent.map(m => ({ role: m.role, content: sanitizeForHistory(m.content) }));
 }
 
+// ---------------- GitHub tool-use (agent side) ----------------
+const GH_MAX_STEPS = 6;
+
+const GH_TOOL_SYSTEM = `
+
+You also have access to GitHub tools when the task calls for it (reading or writing repo files, branches, pull requests). To use one, reply with ONLY this, nothing else in that turn:
+<gh_action>{"action":"ACTION_NAME", ...params}</gh_action>
+You will get the result back as <gh_result>...</gh_result>. Take exactly ONE action per turn, then decide the next step from the result. Once you have everything you need, give your final answer as plain text with NO <gh_action> tag.
+
+Actions:
+- list_repos {} — repos the user's token can access
+- get_repo {"owner","repo"}
+- get_branches {"owner","repo"}
+- get_contents {"owner","repo","path","branch"} — path "" = root; returns a directory listing, or a file's content
+- put_file {"owner","repo","path","content","message","branch","sha"} — create/update a file (sha only when overwriting an existing file). WRITE action — the user must approve it.
+- delete_file {"owner","repo","path","sha","message","branch"} — WRITE action — needs approval.
+- create_branch {"owner","repo","branch","base"} — WRITE action — needs approval.
+- create_pr {"owner","repo","title","head","base","prBody"} — WRITE action — needs approval.
+
+If the user didn't name a repo, omit owner/repo — they'll default to whatever is currently open in the GitHub panel.`;
+
+function parseGhAction(text) {
+  const m = text.match(/<gh_action>([\s\S]*?)<\/gh_action>/);
+  if (!m) return null;
+  let raw = m[1].trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
+  try {
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj.action !== "string") return null;
+    return obj;
+  } catch {
+    return null;
+  }
+}
+
+const GH_WRITE_ACTIONS = new Set(["put_file", "delete_file", "create_branch", "create_pr"]);
+const GH_VALID_ACTIONS = new Set(["list_repos", "get_repo", "get_branches", "get_contents", "put_file", "delete_file", "create_branch", "create_pr", "list_pulls"]);
+
+function resolveGhActionParams(action) {
+  const out = { ...action };
+  if (!out.owner && typeof ghState !== "undefined" && ghState.owner) out.owner = ghState.owner;
+  if (!out.repo && typeof ghState !== "undefined" && ghState.repo) out.repo = ghState.repo;
+  if (out.branch === undefined && typeof ghState !== "undefined" && ghState.branch) out.branch = ghState.branch;
+  return out;
+}
+
 async function callAgentRaw(endpoint, model, system, prompt, maxTokens, images, history) {
   let effectiveSystem = system;
   if (currentProjectInstructions) {
@@ -1988,15 +2050,66 @@ async function callAgent(role, prompt, maxTokens = null, images = null, history 
     maxTokens = (role === "code" || role === "debug" || role === "reasoning") ? 3000 : 1200;
   }
 
-  let lastError = null;
-  for (const providerConfig of agent.providers) {
-    const endpoint = PROVIDER_ENDPOINTS[providerConfig.provider];
-    const { ok, data } = await callAgentRaw(endpoint, providerConfig.model, agent.system, prompt, maxTokens, images, history);
-    if (ok) return cleanThinking(data.content || "");
-    lastError = { provider: providerConfig.provider, error: data };
-    // any failure (rate limit, quota, model error, etc.) — fall through to the next provider immediately
+  const ghOpen = typeof ghState !== "undefined" && ghState.owner;
+  const ghContext = ghOpen
+    ? `\n\nCurrently open in the GitHub panel: ${ghState.owner}/${ghState.repo} (branch: ${ghState.branch}). Use this repo by default if the user doesn't name one.`
+    : `\n\nNo repo is currently open in the GitHub panel right now.`;
+  const systemWithTools = agent.system + GH_TOOL_SYSTEM + ghContext;
+
+  let convo = history ? history.slice() : [];
+  let currentPrompt = prompt;
+  let currentImages = images;
+
+  for (let step = 0; step < GH_MAX_STEPS; step++) {
+    let stepText = null;
+    let lastError = null;
+    for (const providerConfig of agent.providers) {
+      const endpoint = PROVIDER_ENDPOINTS[providerConfig.provider];
+      const { ok, data } = await callAgentRaw(endpoint, providerConfig.model, systemWithTools, currentPrompt, maxTokens, currentImages, convo);
+      if (ok) { stepText = cleanThinking(data.content || ""); break; }
+      lastError = { provider: providerConfig.provider, error: data };
+      // any failure (rate limit, quota, model error, etc.) — fall through to the next provider immediately
+    }
+    if (stepText === null) {
+      return `[Error] All providers failed for this task. Last error (${lastError.provider}): ${JSON.stringify(lastError.error)}`;
+    }
+
+    const action = parseGhAction(stepText);
+    if (!action || !GH_VALID_ACTIONS.has(action.action)) {
+      return stepText; // final answer — no (valid) tool call
+    }
+
+    const resolved = resolveGhActionParams(action);
+    if (typeof ghLogActivity === "function") ghLogActivity(role, resolved, "start");
+
+    if (GH_WRITE_ACTIONS.has(resolved.action)) {
+      const approved = typeof requestGhApproval === "function" ? await requestGhApproval(role, resolved) : false;
+      if (!approved) {
+        if (typeof ghLogActivity === "function") ghLogActivity(role, resolved, "denied");
+        convo.push({ role: "assistant", content: stepText });
+        currentPrompt = `<gh_result>{"error":"The user denied this action. Do not retry the exact same action — either try a different approach, or explain to the user in plain text what you needed and why, without asking for approval again."}</gh_result>`;
+        currentImages = null;
+        continue;
+      }
+    }
+
+    let resultText;
+    try {
+      const result = await ghCall(resolved.action, resolved);
+      resultText = JSON.stringify(result);
+      if (resultText.length > 4000) resultText = resultText.slice(0, 4000) + "...[truncated]";
+      if (typeof ghLogActivity === "function") ghLogActivity(role, resolved, "done");
+    } catch (e) {
+      resultText = JSON.stringify({ error: e.message });
+      if (typeof ghLogActivity === "function") ghLogActivity(role, resolved, "error");
+    }
+
+    convo.push({ role: "assistant", content: stepText });
+    currentPrompt = `<gh_result>${resultText}</gh_result>`;
+    currentImages = null;
   }
-  return `[Error] All providers failed for this task. Last error (${lastError.provider}): ${JSON.stringify(lastError.error)}`;
+
+  return "[Stopped after too many GitHub actions in a single turn — try breaking the task into smaller steps.]";
 }
 
 function cleanThinking(text) {
@@ -4299,6 +4412,85 @@ document.getElementById("githubReposBtn").onclick = async () => {
 };
 document.getElementById("githubReposBackBtn").onclick = () => {
   document.getElementById("githubReposPageView").style.display = "none";
+};
+
+// ---- Agent tool-use: approval modal + activity log ----
+
+function ghRepoStr(a) {
+  if (a.owner && a.repo) return `${a.owner}/${a.repo}`;
+  if (ghState.owner) return `${ghState.owner}/${ghState.repo}`;
+  return "(no repo specified)";
+}
+
+function ghDescribeAction(a) {
+  const repoStr = escapeHtml(ghRepoStr(a));
+  switch (a.action) {
+    case "put_file": {
+      const preview = escapeHtml((a.content || "").slice(0, 3000));
+      const isNew = !a.sha;
+      return `<div><b>${isNew ? "Create" : "Update"} file</b></div>
+        <div>Repo: ${repoStr}</div>
+        <div>Branch: ${escapeHtml(a.branch || ghState.branch || "default")}</div>
+        <div>Path: ${escapeHtml(a.path || "")}</div>
+        <div>Message: ${escapeHtml(a.message || "")}</div>
+        <div style="margin-top:8px; color:var(--text-dim);">Content:</div>
+        <pre style="white-space:pre-wrap; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px; max-height:160px; overflow:auto;">${preview}</pre>`;
+    }
+    case "delete_file":
+      return `<div><b>Delete file</b></div>
+        <div>Repo: ${repoStr}</div>
+        <div>Branch: ${escapeHtml(a.branch || ghState.branch || "default")}</div>
+        <div>Path: ${escapeHtml(a.path || "")}</div>`;
+    case "create_branch":
+      return `<div><b>Create branch</b></div>
+        <div>Repo: ${repoStr}</div>
+        <div>New branch: ${escapeHtml(a.branch || "")}</div>
+        <div>From: ${escapeHtml(a.base || ghState.branch || "default")}</div>`;
+    case "create_pr":
+      return `<div><b>Open pull request</b></div>
+        <div>Repo: ${repoStr}</div>
+        <div>${escapeHtml(a.head || "")} → ${escapeHtml(a.base || "")}</div>
+        <div>Title: ${escapeHtml(a.title || "")}</div>
+        ${a.prBody ? `<div style="margin-top:6px; color:var(--text-dim);">${escapeHtml(a.prBody)}</div>` : ""}`;
+    default:
+      return `<pre style="white-space:pre-wrap;">${escapeHtml(JSON.stringify(a, null, 2))}</pre>`;
+  }
+}
+
+let ghApprovalResolver = null;
+function requestGhApproval(role, action) {
+  return new Promise((resolve) => {
+    ghApprovalResolver = resolve;
+    document.getElementById("ghApprovalRole").textContent = role;
+    document.getElementById("ghApprovalSummary").innerHTML = ghDescribeAction(action);
+    document.getElementById("ghApprovalOverlay").style.display = "flex";
+  });
+}
+document.getElementById("ghApprovalApproveBtn").onclick = () => {
+  document.getElementById("ghApprovalOverlay").style.display = "none";
+  if (ghApprovalResolver) { ghApprovalResolver(true); ghApprovalResolver = null; }
+};
+document.getElementById("ghApprovalDenyBtn").onclick = () => {
+  document.getElementById("ghApprovalOverlay").style.display = "none";
+  if (ghApprovalResolver) { ghApprovalResolver(false); ghApprovalResolver = null; }
+};
+
+function ghLogActivity(role, action, status) {
+  const panel = document.getElementById("ghActivityLog");
+  const lines = document.getElementById("ghActivityLines");
+  panel.style.display = "block";
+  const icon = { start: "⏳", done: "✓", error: "✕", denied: "🚫" }[status] || "•";
+  const color = { done: "var(--accent)", error: "var(--error)", denied: "var(--error)" }[status] || "var(--text-dim)";
+  const path = action.path ? " " + action.path : "";
+  const line = document.createElement("div");
+  line.style.cssText = `padding:3px 0; color:${color}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`;
+  line.textContent = `${icon} ${role}: ${action.action}${path}`;
+  lines.appendChild(line);
+  while (lines.children.length > 8) lines.removeChild(lines.firstChild);
+  panel.scrollTop = panel.scrollHeight;
+}
+document.getElementById("ghActivityCloseBtn").onclick = () => {
+  document.getElementById("ghActivityLog").style.display = "none";
 };
 </script>
 
