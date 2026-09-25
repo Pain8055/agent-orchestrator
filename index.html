@@ -463,6 +463,153 @@
   }
   .project-instructions-input:focus { border-color: var(--accent); }
 
+  /* ---------- GitHub panel ---------- */
+  .gh-repo-bar {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .gh-repo-input {
+    flex: 1;
+    min-width: 0;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 9px 10px;
+    border-radius: 6px;
+    outline: none;
+  }
+  .gh-repo-input:focus { border-color: var(--accent); }
+  .gh-btn {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 13px;
+    padding: 9px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .gh-btn:hover { opacity: 0.9; }
+  .gh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .gh-btn-ghost {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .gh-btn-danger {
+    background: transparent;
+    color: var(--error);
+    border: 1px solid var(--error);
+  }
+  .gh-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+    align-items: center;
+  }
+  .gh-branch-select {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 8px 8px;
+    border-radius: 6px;
+    outline: none;
+    max-width: 160px;
+  }
+  .gh-breadcrumb {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    word-break: break-all;
+  }
+  .gh-breadcrumb span {
+    cursor: pointer;
+    color: var(--accent);
+  }
+  .gh-breadcrumb span:hover { text-decoration: underline; }
+  .gh-tree {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .gh-tree-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  .gh-tree-item:last-child { border-bottom: none; }
+  .gh-tree-item:hover { background: var(--panel); }
+  .gh-tree-item .gh-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gh-tree-empty {
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 13px;
+    text-align: center;
+    padding: 30px 10px;
+  }
+  .gh-editor-wrap {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .gh-editor-path {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    margin-bottom: 8px;
+    word-break: break-all;
+  }
+  .gh-editor {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.5;
+    padding: 12px;
+    border-radius: 8px;
+    resize: none;
+    outline: none;
+    white-space: pre;
+    overflow: auto;
+  }
+  .gh-editor:focus { border-color: var(--accent); }
+  .gh-editor-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .gh-status {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    min-height: 16px;
+  }
+  .gh-status.err { color: var(--error); }
+  .gh-status.ok { color: var(--accent); }
+
   .project-save-btn {
     background: var(--accent);
     color: var(--bg);
@@ -1324,6 +1471,8 @@
 
     <button id="skillsBtn" class="nav-item-btn" style="display:none;">🧩 Skills</button>
 
+    <button id="githubBtn" class="nav-item-btn" style="display:none;">🔗 GitHub</button>
+
     <div class="conv-list" id="convList"></div>
 
     <div class="sidebar-footer" id="sidebarFooter" style="display:none;">
@@ -1525,6 +1674,94 @@
   <button class="new-chat-fab" id="importSelectedSkillsBtn">Import selected</button>
 </div>
 
+<div class="chats-page" id="githubPageView" style="display:none;">
+  <div class="chats-page-topbar">
+    <button class="hamburger" id="githubBackBtn">←</button>
+    <div class="chats-page-topbar-right">
+      <button class="topbar-icon-btn" id="githubReposBtn" title="My repos">📚</button>
+    </div>
+  </div>
+  <div class="chats-page-title" style="font-size:22px; margin-bottom:10px;">GitHub</div>
+
+  <div class="gh-repo-bar">
+    <input type="text" id="ghRepoInput" class="gh-repo-input" placeholder="owner/repo  e.g. Pain8055/agent-orchestrator">
+    <button class="gh-btn" id="ghLoadRepoBtn">Load</button>
+  </div>
+
+  <div class="gh-toolbar" id="ghToolbar" style="display:none;">
+    <select id="ghBranchSelect" class="gh-branch-select"></select>
+    <button class="gh-btn gh-btn-ghost" id="ghNewBranchBtn">+ Branch</button>
+    <button class="gh-btn gh-btn-ghost" id="ghNewPrBtn">Pull request</button>
+    <button class="gh-btn gh-btn-ghost" id="ghNewFileBtn">+ File</button>
+  </div>
+
+  <div class="gh-status" id="ghStatus"></div>
+
+  <div class="gh-breadcrumb" id="ghBreadcrumb" style="display:none;"></div>
+
+  <div class="gh-tree" id="ghTree" style="display:none;"></div>
+
+  <div class="gh-editor-wrap" id="ghEditorWrap" style="display:none;">
+    <div class="gh-editor-path" id="ghEditorPath"></div>
+    <textarea class="gh-editor" id="ghEditorTextarea" spellcheck="false"></textarea>
+    <div class="gh-editor-actions">
+      <button class="gh-btn" id="ghSaveFileBtn">Commit</button>
+      <button class="gh-btn gh-btn-ghost" id="ghCloseEditorBtn">Close</button>
+      <button class="gh-btn gh-btn-danger" id="ghDeleteFileBtn" style="margin-left:auto;">Delete file</button>
+    </div>
+  </div>
+</div>
+
+<div class="chats-page" id="githubReposPageView" style="display:none;">
+  <div class="chats-page-topbar">
+    <button class="hamburger" id="githubReposBackBtn">←</button>
+  </div>
+  <div class="chats-page-title" style="font-size:22px;">My repos</div>
+  <div class="gh-status" id="ghReposStatus"></div>
+  <div class="chats-page-list" id="ghReposList"></div>
+</div>
+
+<div class="hint-popup-overlay" id="ghCommitOverlay" style="display:none;">
+  <div class="hint-popup">
+    <div class="hint-popup-title" id="ghCommitTitle">Commit changes</div>
+    <input type="text" id="ghCommitMessage" class="conv-search-input" placeholder="Commit message" style="margin-bottom:10px;">
+    <button class="hint-popup-close" id="ghCommitConfirmBtn">Commit</button>
+    <button class="hint-popup-close" id="ghCommitCancelBtn" style="background:transparent; color:var(--text-dim); border:1px solid var(--border); margin-top:8px;">Cancel</button>
+  </div>
+</div>
+
+<div class="hint-popup-overlay" id="ghNewFileOverlay" style="display:none;">
+  <div class="hint-popup">
+    <div class="hint-popup-title">New file</div>
+    <input type="text" id="ghNewFilePath" class="conv-search-input" placeholder="path/to/file.js" style="margin-bottom:10px;">
+    <button class="hint-popup-close" id="ghNewFileConfirmBtn">Create</button>
+    <button class="hint-popup-close" id="ghNewFileCancelBtn" style="background:transparent; color:var(--text-dim); border:1px solid var(--border); margin-top:8px;">Cancel</button>
+  </div>
+</div>
+
+<div class="hint-popup-overlay" id="ghNewBranchOverlay" style="display:none;">
+  <div class="hint-popup">
+    <div class="hint-popup-title">New branch</div>
+    <input type="text" id="ghNewBranchName" class="conv-search-input" placeholder="branch name" style="margin-bottom:10px;">
+    <div class="project-field-label">From: <span id="ghNewBranchBase"></span></div>
+    <button class="hint-popup-close" id="ghNewBranchConfirmBtn">Create branch</button>
+    <button class="hint-popup-close" id="ghNewBranchCancelBtn" style="background:transparent; color:var(--text-dim); border:1px solid var(--border); margin-top:8px;">Cancel</button>
+  </div>
+</div>
+
+<div class="hint-popup-overlay" id="ghNewPrOverlay" style="display:none;">
+  <div class="hint-popup">
+    <div class="hint-popup-title">Open pull request</div>
+    <input type="text" id="ghPrTitle" class="conv-search-input" placeholder="PR title" style="margin-bottom:10px;">
+    <textarea id="ghPrBody" class="project-instructions-input" placeholder="Description (optional)"></textarea>
+    <div class="project-field-label" style="margin-top:8px;">
+      <span id="ghPrHead"></span> → <span id="ghPrBase"></span>
+    </div>
+    <button class="hint-popup-close" id="ghPrConfirmBtn">Create pull request</button>
+    <button class="hint-popup-close" id="ghPrCancelBtn" style="background:transparent; color:var(--text-dim); border:1px solid var(--border); margin-top:8px;">Cancel</button>
+  </div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
@@ -1543,6 +1780,7 @@ const PROVIDER_ENDPOINTS = {
   gemini: GEMINI_ENDPOINT,
 };
 const TAVILY_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/Tavily-chat1";
+const GITHUB_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/github-chat";
 // ----------------------------------------------------------
 
 // ---------------- PWA: register the service worker ----------------
@@ -3176,6 +3414,7 @@ async function connect(uid) {
     document.getElementById("allArtifactsBtn").style.display = "block";
     document.getElementById("projectsBtn").style.display = "flex";
     document.getElementById("skillsBtn").style.display = "flex";
+    document.getElementById("githubBtn").style.display = "flex";
 
     allProjects = await loadProjects(userId);
     allSkills = await loadSkills(userId);
@@ -3465,17 +3704,21 @@ async function sendTask() {
     clearReplyContext();
   }
 
-  // Append text-file content as context blocks (truncated to stay under model token limits)
+  // Append text-file content as context blocks.
+  // IMPORTANT: the FULL file always goes into `task` (what gets saved to the DB and shown
+  // in the UI) — nothing is ever lost. A separate `modelTask` is built alongside it, where
+  // any oversized file is truncated ONLY for the copy actually sent to the model, to stay
+  // under provider token limits. Previously these were the same string, so a truncated
+  // file was truncated forever, in the saved chat history too.
   const MAX_FILE_CHARS = 6000;
+  let modelTask = task;
   const textAttachments = attachedFiles.filter(f => f.kind === "text");
   for (const f of textAttachments) {
-    let content = f.content;
-    let truncated = false;
-    if (content.length > MAX_FILE_CHARS) {
-      content = content.slice(0, MAX_FILE_CHARS);
-      truncated = true;
-    }
-    task += `\n\n[[file:${f.name}${truncated ? " (truncated)" : ""}]]${content}[[/file]]`;
+    const full = f.content;
+    task += `\n\n[[file:${f.name}]]${full}[[/file]]`;
+    const overLimit = full.length > MAX_FILE_CHARS;
+    const forModel = overLimit ? full.slice(0, MAX_FILE_CHARS) : full;
+    modelTask += `\n\n[[file:${f.name}${overLimit ? " (truncated for AI context — full file is saved)" : ""}]]${forModel}[[/file]]`;
   }
 
   // Append images as markdown image syntax (for display) and capture raw data for vision routing
@@ -3483,11 +3726,13 @@ async function sendTask() {
   const imageDataUrls = imageAttachments.map(f => f.dataUrl);
   for (const f of imageAttachments) {
     task += `\n\n![${f.name}](${f.dataUrl})`;
+    modelTask += `\n\n![${f.name}](${f.dataUrl})`;
   }
 
   attachedFiles = [];
   renderAttachChips();
 
+  // `task` (full, untruncated) is what's saved to the DB and shown in the UI.
   const userMsg = await saveMessage(userId, currentConvId, currentBranchId, "user", task);
   addMessage("user", task, null, userMsg.id);
   messages.push(userMsg);
@@ -3503,7 +3748,8 @@ async function sendTask() {
     await touchConversation(currentConvId);
   }
 
-  await runAndSaveResponse(task, imageDataUrls.length ? { images: imageDataUrls, question: typed } : null);
+  // `modelTask` (possibly truncated for oversized files) is what's actually sent to the agent.
+  await runAndSaveResponse(modelTask, imageDataUrls.length ? { images: imageDataUrls, question: typed } : null);
   currentSkillInstructions = null;
   document.getElementById("sendBtn").disabled = false;
 }
@@ -3682,6 +3928,378 @@ async function submitEdit(wrap, msgId, newContent) {
 
 document.getElementById("sendBtn").onclick = sendTask;
 document.getElementById("taskInput").addEventListener("keydown", e => { if (e.key === "Enter") sendTask(); });
+
+// ==================== GitHub integration ====================
+
+async function ghCall(action, params = {}) {
+  const res = await fetch(GITHUB_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, ...params }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    const msg = (data.error && data.error.message) ? data.error.message : JSON.stringify(data.error || data);
+    throw new Error(msg);
+  }
+  return data.data;
+}
+
+function ghSetStatus(msg, kind = "") {
+  const el = document.getElementById("ghStatus");
+  el.textContent = msg || "";
+  el.className = "gh-status" + (kind ? " " + kind : "");
+}
+
+let ghState = {
+  owner: null,
+  repo: null,
+  branch: null,
+  defaultBranch: null,
+  path: "",           // current directory being browsed
+  branches: [],
+  openFile: null,     // { path, sha }
+};
+
+function ghParseRepoInput(v) {
+  v = (v || "").trim().replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "").replace(/\/$/, "");
+  const parts = v.split("/").filter(Boolean);
+  if (parts.length < 2) return null;
+  return { owner: parts[0], repo: parts[1] };
+}
+
+function openGithubPage() {
+  document.getElementById("githubPageView").style.display = "flex";
+  const saved = localStorage.getItem("gh_last_repo");
+  if (saved && !document.getElementById("ghRepoInput").value) {
+    document.getElementById("ghRepoInput").value = saved;
+  }
+}
+document.getElementById("githubBtn").onclick = openGithubPage;
+document.getElementById("githubBackBtn").onclick = () => {
+  document.getElementById("githubPageView").style.display = "none";
+};
+
+async function ghLoadRepo() {
+  const parsed = ghParseRepoInput(document.getElementById("ghRepoInput").value);
+  if (!parsed) { ghSetStatus("Enter a repo as owner/repo", "err"); return; }
+  ghSetStatus("Loading repo…");
+  document.getElementById("ghLoadRepoBtn").disabled = true;
+  try {
+    const repoInfo = await ghCall("get_repo", parsed);
+    const branches = await ghCall("get_branches", parsed);
+    ghState.owner = parsed.owner;
+    ghState.repo = parsed.repo;
+    ghState.defaultBranch = repoInfo.default_branch;
+    ghState.branch = repoInfo.default_branch;
+    ghState.branches = branches;
+    ghState.path = "";
+    localStorage.setItem("gh_last_repo", `${parsed.owner}/${parsed.repo}`);
+
+    const sel = document.getElementById("ghBranchSelect");
+    sel.innerHTML = branches.map(b => `<option value="${escapeHtml(b.name)}">${escapeHtml(b.name)}</option>`).join("");
+    sel.value = ghState.branch;
+
+    document.getElementById("ghToolbar").style.display = "flex";
+    ghCloseEditor();
+    await ghBrowse("");
+    ghSetStatus(`Loaded ${parsed.owner}/${parsed.repo}`, "ok");
+  } catch (e) {
+    ghSetStatus("Error: " + e.message, "err");
+  }
+  document.getElementById("ghLoadRepoBtn").disabled = false;
+}
+document.getElementById("ghLoadRepoBtn").onclick = ghLoadRepo;
+document.getElementById("ghRepoInput").addEventListener("keydown", e => { if (e.key === "Enter") ghLoadRepo(); });
+
+document.getElementById("ghBranchSelect").onchange = (e) => {
+  ghState.branch = e.target.value;
+  ghCloseEditor();
+  ghBrowse(ghState.path);
+};
+
+function ghRenderBreadcrumb() {
+  const el = document.getElementById("ghBreadcrumb");
+  const parts = ghState.path ? ghState.path.split("/") : [];
+  let html = `<span data-path="">${escapeHtml(ghState.repo)}</span>`;
+  let acc = "";
+  parts.forEach((p, i) => {
+    acc = acc ? acc + "/" + p : p;
+    html += ` / <span data-path="${escapeHtml(acc)}">${escapeHtml(p)}</span>`;
+  });
+  el.innerHTML = html;
+  el.style.display = "block";
+  el.querySelectorAll("span[data-path]").forEach(s => {
+    s.onclick = () => ghBrowse(s.dataset.path);
+  });
+}
+
+async function ghBrowse(path) {
+  ghSetStatus("Loading…");
+  const treeEl = document.getElementById("ghTree");
+  try {
+    const items = await ghCall("get_contents", {
+      owner: ghState.owner, repo: ghState.repo, path, branch: ghState.branch,
+    });
+    ghState.path = path;
+    ghRenderBreadcrumb();
+    treeEl.style.display = "block";
+
+    let list = Array.isArray(items) ? items : [items];
+    // folders first, then files, alphabetical within each
+    list = list.slice().sort((a, b) => {
+      if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    if (!list.length) {
+      treeEl.innerHTML = `<div class="gh-tree-empty">Empty directory</div>`;
+    } else {
+      treeEl.innerHTML = list.map(it => `
+        <div class="gh-tree-item" data-type="${it.type}" data-path="${escapeHtml(it.path)}" data-sha="${escapeHtml(it.sha)}">
+          <span>${it.type === "dir" ? "📁" : "📄"}</span>
+          <span class="gh-name">${escapeHtml(it.name)}</span>
+        </div>
+      `).join("");
+      treeEl.querySelectorAll(".gh-tree-item").forEach(row => {
+        row.onclick = () => {
+          if (row.dataset.type === "dir") {
+            ghBrowse(row.dataset.path);
+          } else {
+            ghOpenFile(row.dataset.path);
+          }
+        };
+      });
+    }
+    ghSetStatus("");
+  } catch (e) {
+    ghSetStatus("Error: " + e.message, "err");
+  }
+}
+
+async function ghOpenFile(path) {
+  ghSetStatus("Opening " + path + "…");
+  try {
+    const file = await ghCall("get_contents", {
+      owner: ghState.owner, repo: ghState.repo, path, branch: ghState.branch,
+    });
+    if (Array.isArray(file)) { ghSetStatus("Not a file", "err"); return; }
+    ghState.openFile = { path: file.path, sha: file.sha };
+    document.getElementById("ghEditorPath").textContent = file.path;
+    document.getElementById("ghEditorTextarea").value = file.decoded_content != null ? file.decoded_content : "[binary file — cannot edit here]";
+    document.getElementById("ghTree").style.display = "none";
+    document.getElementById("ghBreadcrumb").style.display = "none";
+    document.getElementById("ghEditorWrap").style.display = "flex";
+    ghSetStatus("");
+  } catch (e) {
+    ghSetStatus("Error: " + e.message, "err");
+  }
+}
+
+function ghCloseEditor() {
+  ghState.openFile = null;
+  document.getElementById("ghEditorWrap").style.display = "none";
+  document.getElementById("ghTree").style.display = "block";
+  document.getElementById("ghBreadcrumb").style.display = "block";
+}
+document.getElementById("ghCloseEditorBtn").onclick = ghCloseEditor;
+
+// ---- Commit (create or update file) ----
+let ghPendingCommit = null; // { path, content, sha, isNew }
+
+function ghOpenCommitModal(pathForNewFile) {
+  const isNew = !!pathForNewFile;
+  ghPendingCommit = {
+    path: isNew ? pathForNewFile : ghState.openFile.path,
+    content: isNew ? "" : document.getElementById("ghEditorTextarea").value,
+    sha: isNew ? null : ghState.openFile.sha,
+    isNew,
+  };
+  document.getElementById("ghCommitTitle").textContent = isNew ? "Create file" : "Commit changes";
+  document.getElementById("ghCommitMessage").value = isNew ? `Create ${pathForNewFile}` : `Update ${ghPendingCommit.path}`;
+  document.getElementById("ghCommitOverlay").style.display = "flex";
+}
+
+document.getElementById("ghSaveFileBtn").onclick = () => {
+  ghPendingCommit = {
+    path: ghState.openFile.path,
+    content: document.getElementById("ghEditorTextarea").value,
+    sha: ghState.openFile.sha,
+    isNew: false,
+  };
+  document.getElementById("ghCommitTitle").textContent = "Commit changes";
+  document.getElementById("ghCommitMessage").value = `Update ${ghPendingCommit.path}`;
+  document.getElementById("ghCommitOverlay").style.display = "flex";
+};
+
+document.getElementById("ghCommitCancelBtn").onclick = () => {
+  document.getElementById("ghCommitOverlay").style.display = "none";
+  ghPendingCommit = null;
+};
+
+document.getElementById("ghCommitConfirmBtn").onclick = async () => {
+  if (!ghPendingCommit) return;
+  const msg = document.getElementById("ghCommitMessage").value.trim() || "Update via Quorum";
+  document.getElementById("ghCommitOverlay").style.display = "none";
+  ghSetStatus("Committing…");
+  try {
+    const res = await ghCall("put_file", {
+      owner: ghState.owner, repo: ghState.repo, path: ghPendingCommit.path,
+      content: ghPendingCommit.content, message: msg, branch: ghState.branch,
+      sha: ghPendingCommit.sha || undefined,
+    });
+    ghSetStatus("Committed ✓", "ok");
+    if (ghPendingCommit.isNew) {
+      ghCloseEditor();
+      await ghBrowse(ghState.path);
+    } else {
+      // refresh sha so a second commit in a row doesn't 409
+      ghState.openFile.sha = res.content.sha;
+    }
+  } catch (e) {
+    ghSetStatus("Error: " + e.message, "err");
+  }
+  ghPendingCommit = null;
+};
+
+document.getElementById("ghNewFileBtn").onclick = () => {
+  document.getElementById("ghNewFilePath").value = ghState.path ? ghState.path + "/" : "";
+  document.getElementById("ghNewFileOverlay").style.display = "flex";
+};
+document.getElementById("ghNewFileCancelBtn").onclick = () => {
+  document.getElementById("ghNewFileOverlay").style.display = "none";
+};
+document.getElementById("ghNewFileConfirmBtn").onclick = () => {
+  const path = document.getElementById("ghNewFilePath").value.trim();
+  document.getElementById("ghNewFileOverlay").style.display = "none";
+  if (!path) return;
+  ghState.openFile = { path, sha: null };
+  document.getElementById("ghEditorPath").textContent = path + "  (new file)";
+  document.getElementById("ghEditorTextarea").value = "";
+  document.getElementById("ghTree").style.display = "none";
+  document.getElementById("ghBreadcrumb").style.display = "none";
+  document.getElementById("ghEditorWrap").style.display = "flex";
+};
+
+document.getElementById("ghDeleteFileBtn").onclick = async () => {
+  if (!ghState.openFile || !ghState.openFile.sha) { ghCloseEditor(); return; }
+  if (!confirm(`Delete ${ghState.openFile.path}? This commits a deletion to ${ghState.branch}.`)) return;
+  ghSetStatus("Deleting…");
+  try {
+    await ghCall("delete_file", {
+      owner: ghState.owner, repo: ghState.repo, path: ghState.openFile.path,
+      sha: ghState.openFile.sha, message: `Delete ${ghState.openFile.path}`, branch: ghState.branch,
+    });
+    ghSetStatus("Deleted ✓", "ok");
+    ghCloseEditor();
+    await ghBrowse(ghState.path);
+  } catch (e) {
+    ghSetStatus("Error: " + e.message, "err");
+  }
+};
+
+// ---- Branches ----
+document.getElementById("ghNewBranchBtn").onclick = () => {
+  if (!ghState.owner) return;
+  document.getElementById("ghNewBranchName").value = "";
+  document.getElementById("ghNewBranchBase").textContent = ghState.branch;
+  document.getElementById("ghNewBranchOverlay").style.display = "flex";
+};
+document.getElementById("ghNewBranchCancelBtn").onclick = () => {
+  document.getElementById("ghNewBranchOverlay").style.display = "none";
+};
+document.getElementById("ghNewBranchConfirmBtn").onclick = async () => {
+  const name = document.getElementById("ghNewBranchName").value.trim();
+  document.getElementById("ghNewBranchOverlay").style.display = "none";
+  if (!name) return;
+  ghSetStatus("Creating branch…");
+  try {
+    await ghCall("create_branch", {
+      owner: ghState.owner, repo: ghState.repo, branch: name, base: ghState.branch,
+    });
+    const branches = await ghCall("get_branches", { owner: ghState.owner, repo: ghState.repo });
+    ghState.branches = branches;
+    const sel = document.getElementById("ghBranchSelect");
+    sel.innerHTML = branches.map(b => `<option value="${escapeHtml(b.name)}">${escapeHtml(b.name)}</option>`).join("");
+    sel.value = name;
+    ghState.branch = name;
+    ghCloseEditor();
+    await ghBrowse(ghState.path);
+    ghSetStatus(`Branch "${name}" created ✓`, "ok");
+  } catch (e) {
+    ghSetStatus("Error: " + e.message, "err");
+  }
+};
+
+// ---- Pull requests ----
+document.getElementById("ghNewPrBtn").onclick = () => {
+  if (!ghState.owner) return;
+  document.getElementById("ghPrTitle").value = "";
+  document.getElementById("ghPrBody").value = "";
+  document.getElementById("ghPrHead").textContent = ghState.branch;
+  document.getElementById("ghPrBase").textContent = ghState.defaultBranch;
+  document.getElementById("ghNewPrOverlay").style.display = "flex";
+};
+document.getElementById("ghPrCancelBtn").onclick = () => {
+  document.getElementById("ghNewPrOverlay").style.display = "none";
+};
+document.getElementById("ghPrConfirmBtn").onclick = async () => {
+  const title = document.getElementById("ghPrTitle").value.trim();
+  const body = document.getElementById("ghPrBody").value.trim();
+  document.getElementById("ghNewPrOverlay").style.display = "none";
+  if (!title) { ghSetStatus("PR needs a title", "err"); return; }
+  if (ghState.branch === ghState.defaultBranch) {
+    ghSetStatus("Can't open a PR from the default branch into itself — switch to a feature branch first.", "err");
+    return;
+  }
+  ghSetStatus("Opening pull request…");
+  try {
+    const pr = await ghCall("create_pr", {
+      owner: ghState.owner, repo: ghState.repo, title, prBody: body,
+      head: ghState.branch, base: ghState.defaultBranch,
+    });
+    ghSetStatus(`PR #${pr.number} opened ✓`, "ok");
+  } catch (e) {
+    ghSetStatus("Error: " + e.message, "err");
+  }
+};
+
+// ---- Repo picker (list repos accessible to the token) ----
+document.getElementById("githubReposBtn").onclick = async () => {
+  document.getElementById("githubReposPageView").style.display = "flex";
+  const statusEl = document.getElementById("ghReposStatus");
+  const listEl = document.getElementById("ghReposList");
+  statusEl.textContent = "Loading repos…";
+  statusEl.className = "gh-status";
+  listEl.innerHTML = "";
+  try {
+    const repos = await ghCall("list_repos");
+    statusEl.textContent = "";
+    if (!repos.length) {
+      listEl.innerHTML = `<div class="artifacts-empty">No repos found for this token.</div>`;
+      return;
+    }
+    listEl.innerHTML = repos.map(r => `
+      <div class="gh-tree-item" data-full="${escapeHtml(r.full_name)}">
+        <span>${r.private ? "🔒" : "📦"}</span>
+        <span class="gh-name">${escapeHtml(r.full_name)}</span>
+      </div>
+    `).join("");
+    listEl.querySelectorAll(".gh-tree-item").forEach(row => {
+      row.onclick = () => {
+        document.getElementById("ghRepoInput").value = row.dataset.full;
+        document.getElementById("githubReposPageView").style.display = "none";
+        ghLoadRepo();
+      };
+    });
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+    statusEl.className = "gh-status err";
+  }
+};
+document.getElementById("githubReposBackBtn").onclick = () => {
+  document.getElementById("githubReposPageView").style.display = "none";
+};
 </script>
 
 </body>
