@@ -1362,6 +1362,88 @@
   }
   .attach-chip .chip-remove:hover { color: var(--error); }
 
+  .file-attach-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12.5px;
+    font-family: var(--mono);
+    color: var(--text);
+    max-width: 100%;
+    cursor: pointer;
+    margin: 4px 0;
+  }
+  .file-attach-chip:hover { border-color: var(--accent); }
+  .file-attach-chip .file-attach-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    max-width: 220px;
+  }
+  .file-attach-chip .file-attach-size {
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+
+  .file-preview-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 300;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+  .file-preview-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    width: 100%;
+    max-width: 800px;
+    height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .file-preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text);
+  }
+  .file-preview-header button {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 18px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .file-preview-header button:hover { color: var(--error); }
+  .file-preview-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    margin: 0;
+    padding: 16px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+  }
+
   .input-pill {
     max-width: 800px;
     margin: 0 auto;
@@ -1764,6 +1846,16 @@
   </div>
 </div>
 
+<div class="file-preview-modal" id="filePreviewModal">
+  <div class="file-preview-box">
+    <div class="file-preview-header">
+      <span id="filePreviewName"></span>
+      <button onclick="closeFilePreview()">✕</button>
+    </div>
+    <pre class="file-preview-body" id="filePreviewBody"></pre>
+  </div>
+</div>
+
 <div class="chats-page" id="sandboxPageView" style="display:none;">
   <div class="chats-page-topbar">
     <button class="hamburger" id="sandboxBackBtn">←</button>
@@ -1999,9 +2091,25 @@ let messages = [];
 let currentProjectInstructions = null;
 let currentSkillInstructions = null;
 
+// Nonce-based file-attachment wrapper — see the long comment in sendTask() for why a
+// random nonce replaced the old static "[[file:...]]...[[/file]]" marker.
+function attachNonce() {
+  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+}
+function wrapAttach(nonce, name, content) {
+  return `\u0000\u0001ATTACH:${nonce}:${name}\u0002${content}\u0000\u0001ENDATTACH:${nonce}\u0002`;
+}
+const ATTACH_RE = /\u0000\u0001ATTACH:([a-z0-9]+):([^\u0002]*)\u0002([\s\S]*?)\u0000\u0001ENDATTACH:\1\u0002/g;
+// Old format, kept only so chats saved before this fix still render/redact correctly.
+const ATTACH_RE_LEGACY = /\[\[file:([^\]]+)\]\]([\s\S]*?)\[\[\/file\]\]/g;
+
 function sanitizeForHistory(content) {
   if (!content) return "";
-  let c = content.replace(/\[\[file:[^\]]*\]\][\s\S]*?\[\[\/file\]\]/g, "[attached file omitted from history]");
+  // Don't resend full file/tool content on every future turn — that's what burns tokens.
+  // Only a short placeholder goes into history; an agent that actually needs the current
+  // content again should re-fetch it (get_contents / re-read), not rely on a stale copy.
+  let c = content.replace(ATTACH_RE, "[attached file omitted from history — re-fetch it if you need the current content]");
+  c = c.replace(ATTACH_RE_LEGACY, "[attached file omitted from history — re-fetch it if you need the current content]");
   c = c.replace(/!\[[^\]]*\]\(data:[^)]+\)/g, "[image omitted from history]");
   if (c.length > 800) c = c.slice(0, 800) + "...[truncated]";
   return c;
@@ -2041,7 +2149,32 @@ You also have tools available when the task calls for them. To use one, reply wi
 
 4) Hand off — you're done with your part; transfer the rest of the task to another agent to finish (available agents: ${AGENT_ROLE_LIST.join(", ")}):
 <handoff_to>{"role":"ROLE", "task":"what they should do, with any context they need"}</handoff_to>
+
+A file attached earlier in this conversation is NOT resent to you in full on later turns (to save tokens) — you'll just see a note that one was attached. If you need its current content again, use get_contents to fetch it fresh rather than assuming or reconstructing it from memory.
 `;
+
+// Models very often emit multi-line code as a JSON string value with REAL line breaks
+// instead of escaping them as \n — which is invalid JSON and made JSON.parse throw, which
+// silently dropped the whole tool call and dumped the raw tags to the user as broken text.
+// This repairs that (and stray \r, \t) by walking the string and escaping control
+// characters ONLY while inside a quoted JSON string, leaving actual JSON structure alone.
+function lenientJsonParse(raw) {
+  try { return JSON.parse(raw); } catch {}
+  let repaired = "";
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (esc) { repaired += ch; esc = false; continue; }
+    if (ch === "\\" && inStr) { repaired += ch; esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; repaired += ch; continue; }
+    if (inStr && ch === "\n") { repaired += "\\n"; continue; }
+    if (inStr && ch === "\r") { repaired += "\\r"; continue; }
+    if (inStr && ch === "\t") { repaired += "\\t"; continue; }
+    repaired += ch;
+  }
+  try { return JSON.parse(repaired); } catch { return null; }
+}
 
 function parseAgentAction(text) {
   const tags = [
@@ -2054,19 +2187,23 @@ function parseAgentAction(text) {
     const m = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
     if (!m) continue;
     let raw = m[1].trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
-    try {
-      const obj = JSON.parse(raw);
-      if (!obj) continue;
-      if (type === "gh" && typeof obj.action !== "string") continue;
-      if (type === "run_code" && (!obj.language || !obj.code)) continue;
-      if (type === "ask_agent" && (!obj.role || !obj.question)) continue;
-      if (type === "handoff_to" && (!obj.role || !obj.task)) continue;
-      return { type, payload: obj };
-    } catch {
-      continue;
-    }
+    const obj = lenientJsonParse(raw);
+    if (!obj) continue;
+    if (type === "gh" && typeof obj.action !== "string") continue;
+    if (type === "run_code" && (!obj.language || !obj.code)) continue;
+    if (type === "ask_agent" && (!obj.role || !obj.question)) continue;
+    if (type === "handoff_to" && (!obj.role || !obj.task)) continue;
+    return { type, payload: obj };
   }
   return null;
+}
+
+// Last-resort cosmetic cleanup: some models leak their own native function-calling wrapper
+// syntax around our tags (seen from at least one OpenRouter free model: <dots_function_call>).
+// Strip just that wrapper from whatever ends up shown to the user, so at worst they see
+// plain leftover text instead of vendor-specific tag debris.
+function stripStrayToolTags(text) {
+  return text.replace(/<\/?[\w-]*function_call>/gi, "").trim();
 }
 
 const GH_WRITE_ACTIONS = new Set(["put_file", "delete_file", "create_branch", "create_pr"]);
@@ -2151,7 +2288,7 @@ async function callAgent(role, prompt, maxTokens = null, images = null, history 
 
     const parsed = parseAgentAction(stepText);
     if (!parsed) {
-      return stepText; // final answer — no tool call
+      return stripStrayToolTags(stepText); // final answer — no (valid) tool call
     }
 
     // ---- GitHub tool ----
@@ -2377,10 +2514,16 @@ function escapeHtml(s) {
 }
 
 function formatContent(text) {
-  // Extract [[file:name]]content[[/file]] markers BEFORE escaping, so we can
-  // render them as a collapsible block with their own controlled escaping.
+  // Extract file-attachment markers BEFORE escaping, so we can render them as a
+  // clickable preview chip (see openFilePreview) with their own controlled escaping.
   const filePlaceholders = [];
-  const preProcessed = text.replace(/\[\[file:([^\]]+)\]\]([\s\S]*?)\[\[\/file\]\]/g, (match, name, content) => {
+  let preProcessed = text.replace(ATTACH_RE, (match, nonce, name, content) => {
+    const idx = filePlaceholders.length;
+    filePlaceholders.push({ name, content });
+    return `\u0000FILEBLOCK${idx}\u0000`;
+  });
+  // Backward compatibility with messages saved before the nonce-based marker existed.
+  preProcessed = preProcessed.replace(ATTACH_RE_LEGACY, (match, name, content) => {
     const idx = filePlaceholders.length;
     filePlaceholders.push({ name, content });
     return `\u0000FILEBLOCK${idx}\u0000`;
@@ -2467,8 +2610,8 @@ function formatContent(text) {
     return /^\|?[\s:|-]+\|?$/.test(line.trim()) && line.includes("-");
   }
 
-  for (let raw of lines) {
-    const line = raw;
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
     const trimmed = line.trim();
 
     // Code fences
@@ -2485,12 +2628,19 @@ function formatContent(text) {
     }
     if (inCodeBlock) { codeBuffer.push(line); continue; }
 
-    // Table detection: a line with pipes, followed conceptually by a separator row
-    if (trimmed.includes("|") && !tableRows) {
-      // peek: is this the header row of a table? We detect by checking if content looks tabular
-      // We'll treat any pipe-containing line as a potential table start, and confirm via the next line being a separator.
-      tableRows = [parseTableRow(trimmed)];
-      continue;
+    // Table detection: a line with pipes only starts a table if the NEXT line is a real
+    // "|---|---|" separator row — that's the actual markdown table syntax. Without this
+    // lookahead, any ordinary line with a pipe (code with `||`, "string | number" types,
+    // JSON, regex) got misread as a table row, which is what was turning plain text into
+    // tables.
+    if (!tableRows && trimmed.includes("|")) {
+      const nextTrimmed = (lines[li + 1] || "").trim();
+      if (isTableSeparator(nextTrimmed)) {
+        flushPara(); flushAllLists();
+        tableRows = [parseTableRow(trimmed)];
+        continue;
+      }
+      // Not a real table header — fall through and treat this line as normal text.
     }
     if (tableRows && isTableSeparator(trimmed)) {
       continue; // skip the |---|---| row
@@ -2500,14 +2650,7 @@ function formatContent(text) {
       continue;
     }
     if (tableRows && !trimmed.includes("|")) {
-      // was it actually a real table (more than just header) or a false positive single line?
-      if (tableRows.length > 1) {
-        flushTable();
-      } else {
-        // false positive: just a line with a pipe character, treat as normal text
-        paraBuffer.push(tableRows[0].join(" | "));
-        tableRows = null;
-      }
+      flushTable();
       // fall through to process this line normally below
     }
 
@@ -2564,15 +2707,36 @@ function formatContent(text) {
 
   let result = blocks.join("");
 
-  // Restore file blocks as collapsible details, escaping their content independently
+  // Restore file blocks as a small clickable chip (like Claude's own attachment preview) —
+  // clicking opens the full content in a modal, rather than dumping potentially huge file
+  // content inline into the chat flow. Content is kept in a registry rather than a data-*
+  // attribute so a 70k-char file doesn't bloat the DOM node itself.
   filePlaceholders.forEach((f, idx) => {
     const placeholder = `\u0000FILEBLOCK${idx}\u0000`;
     const sizeLabel = f.content.length > 999 ? `${(f.content.length / 1000).toFixed(1)}k chars` : `${f.content.length} chars`;
-    const detailsHtml = `<details class="file-attach"><summary>📄 ${escapeHtml(f.name)} <span class="file-size">(${sizeLabel})</span></summary><pre>${escapeHtml(f.content)}</pre></details>`;
-    result = result.split(placeholder).join(detailsHtml);
+    const blockId = "fb" + (++window.__fileBlockSeq);
+    window.__fileBlocks[blockId] = f;
+    const chipHtml = `<div class="file-attach-chip" onclick="openFilePreview('${blockId}')">` +
+      `<span>📄</span><span class="file-attach-name">${escapeHtml(f.name)}</span>` +
+      `<span class="file-attach-size">${sizeLabel}</span></div>`;
+    result = result.split(placeholder).join(chipHtml);
   });
 
   return result;
+}
+
+window.__fileBlocks = window.__fileBlocks || {};
+window.__fileBlockSeq = window.__fileBlockSeq || 0;
+
+function openFilePreview(id) {
+  const f = window.__fileBlocks[id];
+  if (!f) return;
+  document.getElementById("filePreviewName").textContent = f.name;
+  document.getElementById("filePreviewBody").textContent = f.content;
+  document.getElementById("filePreviewModal").style.display = "flex";
+}
+function closeFilePreview() {
+  document.getElementById("filePreviewModal").style.display = "none";
 }
 
 function addMessage(role, content, tag = null, msgId = null) {
@@ -3965,15 +4129,24 @@ async function sendTask() {
   // any oversized file is truncated ONLY for the copy actually sent to the model, to stay
   // under provider token limits. Previously these were the same string, so a truncated
   // file was truncated forever, in the saved chat history too.
+  //
+  // The wrapper marker uses a random per-message nonce plus control bytes (\u0000\u0001\u0002)
+  // that never occur in real text. The old plain "[[file:...]]...[[/file]]" marker broke
+  // whenever someone uploaded a file that itself contained that literal text — e.g. this
+  // app's own index.html source, which contains that exact marker string in the code that
+  // builds it — the non-greedy regex closed on that inner false match and the rest of the
+  // file spilled out as broken raw text. A random nonce can't collide with real content.
   const MAX_FILE_CHARS = 6000;
   let modelTask = task;
   const textAttachments = attachedFiles.filter(f => f.kind === "text");
   for (const f of textAttachments) {
     const full = f.content;
-    task += `\n\n[[file:${f.name}]]${full}[[/file]]`;
+    const nonce = attachNonce();
+    task += `\n\n${wrapAttach(nonce, f.name, full)}`;
     const overLimit = full.length > MAX_FILE_CHARS;
     const forModel = overLimit ? full.slice(0, MAX_FILE_CHARS) : full;
-    modelTask += `\n\n[[file:${f.name}${overLimit ? " (truncated for AI context — full file is saved)" : ""}]]${forModel}[[/file]]`;
+    const modelNonce = attachNonce();
+    modelTask += `\n\n${wrapAttach(modelNonce, f.name + (overLimit ? " (truncated for AI context — full file is saved)" : ""), forModel)}`;
   }
 
   // Append images as markdown image syntax (for display) and capture raw data for vision routing
