@@ -2093,13 +2093,19 @@ let currentSkillInstructions = null;
 
 // Nonce-based file-attachment wrapper — see the long comment in sendTask() for why a
 // random nonce replaced the old static "[[file:...]]...[[/file]]" marker.
+// IMPORTANT: this must NEVER contain a literal NUL byte (\u0000). Postgres text/jsonb
+// columns hard-reject NUL bytes — an insert containing one fails outright. That failure
+// was silent here (saveMessage only destructured `{ data }`, not `error`), so the message
+// never saved, `userMsg` came back null, and `userMsg.id` crashed with nothing to catch
+// it — freezing the whole app until reload. Rare printable Unicode brackets give the same
+// collision-resistance without touching any byte Postgres refuses to store.
 function attachNonce() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 }
 function wrapAttach(nonce, name, content) {
-  return `\u0000\u0001ATTACH:${nonce}:${name}\u0002${content}\u0000\u0001ENDATTACH:${nonce}\u0002`;
+  return `⟦⟦ATTACH:${nonce}:${name}⟧⟧${content}⟦⟦ENDATTACH:${nonce}⟧⟧`;
 }
-const ATTACH_RE = /\u0000\u0001ATTACH:([a-z0-9]+):([^\u0002]*)\u0002([\s\S]*?)\u0000\u0001ENDATTACH:\1\u0002/g;
+const ATTACH_RE = /⟦⟦ATTACH:([a-z0-9]+):([^⟧]*)⟧⟧([\s\S]*?)⟦⟦ENDATTACH:\1⟧⟧/g;
 // Old format, kept only so chats saved before this fix still render/redact correctly.
 const ATTACH_RE_LEGACY = /\[\[file:([^\]]+)\]\]([\s\S]*?)\[\[\/file\]\]/g;
 
@@ -2176,34 +2182,70 @@ function lenientJsonParse(raw) {
   try { return JSON.parse(repaired); } catch { return null; }
 }
 
+const AGENT_TOOL_TAGS = [
+  ["gh_action", "gh"],
+  ["run_code", "run_code"],
+  ["ask_agent", "ask_agent"],
+  ["handoff_to", "handoff_to"],
+];
+
+function validAgentPayload(type, obj) {
+  if (!obj) return false;
+  if (type === "gh" && typeof obj.action !== "string") return false;
+  if (type === "run_code" && (!obj.language || !obj.code)) return false;
+  if (type === "ask_agent" && (!obj.role || !obj.question)) return false;
+  if (type === "handoff_to" && (!obj.role || !obj.task)) return false;
+  return true;
+}
+
+// Fallback for models with their own baked-in tool-calling training that ignore our
+// instructed JSON-tag format entirely and emit their native syntax instead — seen so far
+// as e.g. <ask_agent<arg_key>role</arg_key><arg_value>reasoning</arg_value>...</tool_call>
+// (a Hermes/XML-style tool-call convention some open models default to regardless of what
+// the system prompt asks for). Rather than chase every vendor's exact dialect, this just
+// looks for one of our tool names followed by <arg_key>/<arg_value> pairs ANYWHERE in the
+// text, and rebuilds the same payload shape our normal parser expects.
+function tryArgKeyValueFormat(text) {
+  const nameMatch = text.match(/<(gh_action|run_code|ask_agent|handoff_to)\b/);
+  if (!nameMatch) return null;
+  const tagToType = Object.fromEntries(AGENT_TOOL_TAGS);
+  const type = tagToType[nameMatch[1]];
+
+  const pairs = {};
+  const argRe = /<arg_key>([\s\S]*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g;
+  let m, found = false;
+  while ((m = argRe.exec(text))) {
+    found = true;
+    pairs[m[1].trim()] = m[2].trim();
+  }
+  if (!found || !validAgentPayload(type, pairs)) return null;
+  return { type, payload: pairs };
+}
+
 function parseAgentAction(text) {
-  const tags = [
-    ["gh_action", "gh"],
-    ["run_code", "run_code"],
-    ["ask_agent", "ask_agent"],
-    ["handoff_to", "handoff_to"],
-  ];
-  for (const [tag, type] of tags) {
+  for (const [tag, type] of AGENT_TOOL_TAGS) {
     const m = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
     if (!m) continue;
     let raw = m[1].trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
     const obj = lenientJsonParse(raw);
-    if (!obj) continue;
-    if (type === "gh" && typeof obj.action !== "string") continue;
-    if (type === "run_code" && (!obj.language || !obj.code)) continue;
-    if (type === "ask_agent" && (!obj.role || !obj.question)) continue;
-    if (type === "handoff_to" && (!obj.role || !obj.task)) continue;
+    if (!validAgentPayload(type, obj)) continue;
     return { type, payload: obj };
   }
-  return null;
+  return tryArgKeyValueFormat(text);
 }
 
 // Last-resort cosmetic cleanup: some models leak their own native function-calling wrapper
-// syntax around our tags (seen from at least one OpenRouter free model: <dots_function_call>).
-// Strip just that wrapper from whatever ends up shown to the user, so at worst they see
-// plain leftover text instead of vendor-specific tag debris.
+// syntax around our tags — seen so far as <dots_function_call>...</dots_function_call> and
+// a Hermes/XML-style <tool_call>...<arg_key>...</arg_key><arg_value>...</arg_value>...
+// </tool_call> convention. If tryArgKeyValueFormat still couldn't make sense of it (missing
+// a required field, etc.), strip just the wrapper tags so at worst the person sees plain
+// leftover text instead of raw tag debris.
 function stripStrayToolTags(text) {
-  return text.replace(/<\/?[\w-]*function_call>/gi, "").trim();
+  return text
+    .replace(/<\/?[\w-]*function_call>/gi, "")
+    .replace(/<\/?tool_call>/gi, "")
+    .replace(/<arg_key>([\s\S]*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/gi, "$1: $2")
+    .trim();
 }
 
 const GH_WRITE_ACTIONS = new Set(["put_file", "delete_file", "create_branch", "create_pr"]);
@@ -3435,7 +3477,14 @@ async function loadMessages(branchId) {
 }
 
 async function saveMessage(uid, convId, branchId, role, content) {
-  const { data } = await sb.from("chat_history").insert({ user_id: uid, conversation_id: convId, branch_id: branchId, role, content }).select().single();
+  const { data, error } = await sb.from("chat_history").insert({ user_id: uid, conversation_id: convId, branch_id: branchId, role, content }).select().single();
+  if (error) {
+    // Previously this was swallowed silently (only `data` was read), so a failed insert
+    // returned null and the caller's very next line — userMsg.id — crashed with no way to
+    // recover, freezing the whole app until reload. Throw instead so callers can catch it,
+    // show the person what happened, and put the UI back in a usable state.
+    throw new Error(`Failed to save message: ${error.message || JSON.stringify(error)}`);
+  }
   return data;
 }
 
@@ -4130,7 +4179,7 @@ async function sendTask() {
   // under provider token limits. Previously these were the same string, so a truncated
   // file was truncated forever, in the saved chat history too.
   //
-  // The wrapper marker uses a random per-message nonce plus control bytes (\u0000\u0001\u0002)
+  // The wrapper marker uses a random per-message nonce plus rare Unicode bracket characters
   // that never occur in real text. The old plain "[[file:...]]...[[/file]]" marker broke
   // whenever someone uploaded a file that itself contained that literal text — e.g. this
   // app's own index.html source, which contains that exact marker string in the code that
@@ -4160,26 +4209,36 @@ async function sendTask() {
   attachedFiles = [];
   renderAttachChips();
 
-  // `task` (full, untruncated) is what's saved to the DB and shown in the UI.
-  const userMsg = await saveMessage(userId, currentConvId, currentBranchId, "user", task);
-  addMessage("user", task, null, userMsg.id);
-  messages.push(userMsg);
+  // Everything below can fail for reasons outside our control (a DB insert rejected,
+  // a network blip, a provider error). Previously nothing here was caught, so a single
+  // failure left the send button disabled forever with no error shown — the whole chat
+  // looked "broken" until a full reload. Now any failure is caught, shown, and the UI is
+  // guaranteed to come back to a usable state in the `finally` block.
+  try {
+    // `task` (full, untruncated) is what's saved to the DB and shown in the UI.
+    const userMsg = await saveMessage(userId, currentConvId, currentBranchId, "user", task);
+    addMessage("user", task, null, userMsg.id);
+    messages.push(userMsg);
 
-  // Auto-title the conversation from the first message
-  const conv = allConvs.find(c => c.id === currentConvId);
-  if (conv && conv.title === "New chat") {
-    const title = typed.length > 40 ? typed.slice(0, 40) + "…" : (typed || "New chat");
-    conv.title = title;
-    renderConvList(allConvs, currentConvId);
-    await touchConversation(currentConvId, title);
-  } else {
-    await touchConversation(currentConvId);
+    // Auto-title the conversation from the first message
+    const conv = allConvs.find(c => c.id === currentConvId);
+    if (conv && conv.title === "New chat") {
+      const title = typed.length > 40 ? typed.slice(0, 40) + "…" : (typed || "New chat");
+      conv.title = title;
+      renderConvList(allConvs, currentConvId);
+      await touchConversation(currentConvId, title);
+    } else {
+      await touchConversation(currentConvId);
+    }
+
+    // `modelTask` (possibly truncated for oversized files) is what's actually sent to the agent.
+    await runAndSaveResponse(modelTask, imageDataUrls.length ? { images: imageDataUrls, question: typed } : null);
+  } catch (e) {
+    showError("Message failed to send: " + e.message);
+  } finally {
+    currentSkillInstructions = null;
+    document.getElementById("sendBtn").disabled = false;
   }
-
-  // `modelTask` (possibly truncated for oversized files) is what's actually sent to the agent.
-  await runAndSaveResponse(modelTask, imageDataUrls.length ? { images: imageDataUrls, question: typed } : null);
-  currentSkillInstructions = null;
-  document.getElementById("sendBtn").disabled = false;
 }
 
 // ---------------- Reply / quote handling ----------------
