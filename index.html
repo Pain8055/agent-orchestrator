@@ -1473,6 +1473,8 @@
 
     <button id="githubBtn" class="nav-item-btn" style="display:none;">🔗 GitHub</button>
 
+    <button id="sandboxBtn" class="nav-item-btn" style="display:none;">🧪 Sandbox</button>
+
     <div class="conv-list" id="convList"></div>
 
     <div class="sidebar-footer" id="sidebarFooter" style="display:none;">
@@ -1762,6 +1764,42 @@
   </div>
 </div>
 
+<div class="chats-page" id="sandboxPageView" style="display:none;">
+  <div class="chats-page-topbar">
+    <button class="hamburger" id="sandboxBackBtn">←</button>
+  </div>
+  <div class="chats-page-title" style="font-size:22px; margin-bottom:10px;">Sandbox</div>
+
+  <div class="gh-toolbar">
+    <select id="sbLanguageSelect" class="gh-branch-select" style="max-width:160px;">
+      <option value="javascript">JavaScript</option>
+      <option value="python">Python</option>
+      <option value="bash">Bash</option>
+      <option value="typescript">TypeScript</option>
+      <option value="cpp">C++</option>
+      <option value="c">C</option>
+      <option value="csharp">C#</option>
+      <option value="java">Java</option>
+      <option value="go">Go</option>
+      <option value="rust">Rust</option>
+      <option value="php">PHP</option>
+      <option value="ruby">Ruby</option>
+    </select>
+    <button class="gh-btn" id="sbRunBtn">▶ Run</button>
+  </div>
+
+  <div class="gh-editor-wrap" style="flex:0 0 45%;">
+    <textarea class="gh-editor" id="sbCodeTextarea" spellcheck="false" placeholder="Write code here…"></textarea>
+  </div>
+
+  <div class="gh-status" id="sbStatus"></div>
+
+  <div class="gh-editor-path">Output</div>
+  <div class="gh-editor-wrap">
+    <pre class="gh-editor" id="sbOutput" style="white-space:pre-wrap; margin:0;"></pre>
+  </div>
+</div>
+
 <div class="hint-popup-overlay" id="ghApprovalOverlay" style="display:none; z-index:200;">
   <div class="hint-popup">
     <div class="hint-popup-title">🔗 <span id="ghApprovalRole"></span> agent wants to write to GitHub</div>
@@ -1798,6 +1836,7 @@ const PROVIDER_ENDPOINTS = {
 };
 const TAVILY_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/Tavily-chat1";
 const GITHUB_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/github-chat";
+const CODE_EXEC_ENDPOINT = "https://qhxjsnmmhhichyxbvjro.supabase.co/functions/v1/code-exec";
 // ----------------------------------------------------------
 
 // ---------------- PWA: register the service worker ----------------
@@ -1974,38 +2013,60 @@ function buildHistoryForAgent(msgsArray, excludeLastN = 1) {
   return recent.map(m => ({ role: m.role, content: sanitizeForHistory(m.content) }));
 }
 
-// ---------------- GitHub tool-use (agent side) ----------------
+// ---------------- Agent tools: GitHub, code execution, ask/handoff to another agent ----------------
 const GH_MAX_STEPS = 6;
+const AGENT_ROLE_LIST = ["head", "code", "debug", "reasoning", "writing", "design", "review"];
 
-const GH_TOOL_SYSTEM = `
+const AGENT_TOOL_SYSTEM = `
 
-You also have access to GitHub tools when the task calls for it (reading or writing repo files, branches, pull requests). To use one, reply with ONLY this, nothing else in that turn:
+You also have tools available when the task calls for them. To use one, reply with ONLY the tag below, nothing else in that turn. You'll get the result back as <gh_result>...</gh_result> (or the matching *_result tag), then decide the next step. Take exactly ONE action per turn. Once you have everything you need, give your final answer as plain text with NO tag.
+
+1) GitHub — read/write a repo:
 <gh_action>{"action":"ACTION_NAME", ...params}</gh_action>
-You will get the result back as <gh_result>...</gh_result>. Take exactly ONE action per turn, then decide the next step from the result. Once you have everything you need, give your final answer as plain text with NO <gh_action> tag.
+  - list_repos {} — repos the user's token can access
+  - get_repo {"owner","repo"}
+  - get_branches {"owner","repo"}
+  - get_contents {"owner","repo","path","branch"} — path "" = root; returns a directory listing, or a file's content
+  - put_file {"owner","repo","path","content","message","branch","sha"} — create/update a file (sha only when overwriting an existing file). WRITE — needs the user's approval.
+  - delete_file {"owner","repo","path","sha","message","branch"} — WRITE — needs approval.
+  - create_branch {"owner","repo","branch","base"} — WRITE — needs approval.
+  - create_pr {"owner","repo","title","head","base","prBody"} — WRITE — needs approval.
+  If the user didn't name a repo, omit owner/repo — they default to whatever is currently open in the GitHub panel.
 
-Actions:
-- list_repos {} — repos the user's token can access
-- get_repo {"owner","repo"}
-- get_branches {"owner","repo"}
-- get_contents {"owner","repo","path","branch"} — path "" = root; returns a directory listing, or a file's content
-- put_file {"owner","repo","path","content","message","branch","sha"} — create/update a file (sha only when overwriting an existing file). WRITE action — the user must approve it.
-- delete_file {"owner","repo","path","sha","message","branch"} — WRITE action — needs approval.
-- create_branch {"owner","repo","branch","base"} — WRITE action — needs approval.
-- create_pr {"owner","repo","title","head","base","prBody"} — WRITE action — needs approval.
+2) Run code — execute code in a sandbox and see real stdout/stderr (use this to verify code actually works before handing it to the user):
+<run_code>{"language":"python|javascript|bash|...", "code":"...", "stdin":"(optional)"}</run_code>
 
-If the user didn't name a repo, omit owner/repo — they'll default to whatever is currently open in the GitHub panel.`;
+3) Ask another agent — get a quick answer from a specialist without taking over the task yourself (available agents: ${AGENT_ROLE_LIST.join(", ")}):
+<ask_agent>{"role":"ROLE", "question":"..."}</ask_agent>
 
-function parseGhAction(text) {
-  const m = text.match(/<gh_action>([\s\S]*?)<\/gh_action>/);
-  if (!m) return null;
-  let raw = m[1].trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
-  try {
-    const obj = JSON.parse(raw);
-    if (!obj || typeof obj.action !== "string") return null;
-    return obj;
-  } catch {
-    return null;
+4) Hand off — you're done with your part; transfer the rest of the task to another agent to finish (available agents: ${AGENT_ROLE_LIST.join(", ")}):
+<handoff_to>{"role":"ROLE", "task":"what they should do, with any context they need"}</handoff_to>
+`;
+
+function parseAgentAction(text) {
+  const tags = [
+    ["gh_action", "gh"],
+    ["run_code", "run_code"],
+    ["ask_agent", "ask_agent"],
+    ["handoff_to", "handoff_to"],
+  ];
+  for (const [tag, type] of tags) {
+    const m = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+    if (!m) continue;
+    let raw = m[1].trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
+    try {
+      const obj = JSON.parse(raw);
+      if (!obj) continue;
+      if (type === "gh" && typeof obj.action !== "string") continue;
+      if (type === "run_code" && (!obj.language || !obj.code)) continue;
+      if (type === "ask_agent" && (!obj.role || !obj.question)) continue;
+      if (type === "handoff_to" && (!obj.role || !obj.task)) continue;
+      return { type, payload: obj };
+    } catch {
+      continue;
+    }
   }
+  return null;
 }
 
 const GH_WRITE_ACTIONS = new Set(["put_file", "delete_file", "create_branch", "create_pr"]);
@@ -2017,6 +2078,20 @@ function resolveGhActionParams(action) {
   if (!out.repo && typeof ghState !== "undefined" && ghState.repo) out.repo = ghState.repo;
   if (out.branch === undefined && typeof ghState !== "undefined" && ghState.branch) out.branch = ghState.branch;
   return out;
+}
+
+async function runCode(language, code, stdin) {
+  const res = await fetch(CODE_EXEC_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ language, code, stdin }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    const msg = (data.error && data.error.message) ? data.error.message : JSON.stringify(data.error || data);
+    throw new Error(msg);
+  }
+  return data.data;
 }
 
 async function callAgentRaw(endpoint, model, system, prompt, maxTokens, images, history) {
@@ -2044,7 +2119,7 @@ async function callAgentRaw(endpoint, model, system, prompt, maxTokens, images, 
   return { ok: res.ok, data };
 }
 
-async function callAgent(role, prompt, maxTokens = null, images = null, history = null) {
+async function callAgent(role, prompt, maxTokens = null, images = null, history = null, handoffDepth = 0) {
   const agent = AGENTS[role];
   if (maxTokens === null) {
     maxTokens = (role === "code" || role === "debug" || role === "reasoning") ? 3000 : 1200;
@@ -2054,7 +2129,7 @@ async function callAgent(role, prompt, maxTokens = null, images = null, history 
   const ghContext = ghOpen
     ? `\n\nCurrently open in the GitHub panel: ${ghState.owner}/${ghState.repo} (branch: ${ghState.branch}). Use this repo by default if the user doesn't name one.`
     : `\n\nNo repo is currently open in the GitHub panel right now.`;
-  const systemWithTools = agent.system + GH_TOOL_SYSTEM + ghContext;
+  const systemWithTools = agent.system + AGENT_TOOL_SYSTEM + ghContext;
 
   let convo = history ? history.slice() : [];
   let currentPrompt = prompt;
@@ -2074,42 +2149,108 @@ async function callAgent(role, prompt, maxTokens = null, images = null, history 
       return `[Error] All providers failed for this task. Last error (${lastError.provider}): ${JSON.stringify(lastError.error)}`;
     }
 
-    const action = parseGhAction(stepText);
-    if (!action || !GH_VALID_ACTIONS.has(action.action)) {
-      return stepText; // final answer — no (valid) tool call
+    const parsed = parseAgentAction(stepText);
+    if (!parsed) {
+      return stepText; // final answer — no tool call
     }
 
-    const resolved = resolveGhActionParams(action);
-    if (typeof ghLogActivity === "function") ghLogActivity(role, resolved, "start");
+    // ---- GitHub tool ----
+    if (parsed.type === "gh") {
+      if (!GH_VALID_ACTIONS.has(parsed.payload.action)) return stepText;
+      const resolved = resolveGhActionParams(parsed.payload);
+      if (typeof ghLogActivity === "function") ghLogActivity(role, { action: resolved.action, path: resolved.path }, "start");
 
-    if (GH_WRITE_ACTIONS.has(resolved.action)) {
-      const approved = typeof requestGhApproval === "function" ? await requestGhApproval(role, resolved) : false;
-      if (!approved) {
-        if (typeof ghLogActivity === "function") ghLogActivity(role, resolved, "denied");
+      if (GH_WRITE_ACTIONS.has(resolved.action)) {
+        const approved = typeof requestGhApproval === "function" ? await requestGhApproval(role, resolved) : false;
+        if (!approved) {
+          if (typeof ghLogActivity === "function") ghLogActivity(role, { action: resolved.action, path: resolved.path }, "denied");
+          convo.push({ role: "assistant", content: stepText });
+          currentPrompt = `<gh_result>{"error":"The user denied this action. Do not retry the exact same action — either try a different approach, or explain to the user in plain text what you needed and why, without asking for approval again."}</gh_result>`;
+          currentImages = null;
+          continue;
+        }
+      }
+
+      let resultText;
+      try {
+        const result = await ghCall(resolved.action, resolved);
+        resultText = JSON.stringify(result);
+        if (resultText.length > 4000) resultText = resultText.slice(0, 4000) + "...[truncated]";
+        if (typeof ghLogActivity === "function") ghLogActivity(role, { action: resolved.action, path: resolved.path }, "done");
+      } catch (e) {
+        resultText = JSON.stringify({ error: e.message });
+        if (typeof ghLogActivity === "function") ghLogActivity(role, { action: resolved.action, path: resolved.path }, "error");
+      }
+      convo.push({ role: "assistant", content: stepText });
+      currentPrompt = `<gh_result>${resultText}</gh_result>`;
+      currentImages = null;
+      continue;
+    }
+
+    // ---- Run code ----
+    if (parsed.type === "run_code") {
+      const { language, code, stdin } = parsed.payload;
+      if (typeof ghLogActivity === "function") ghLogActivity(role, { action: "run_code", path: language }, "start");
+      let resultText;
+      try {
+        const result = await runCode(language, code, stdin);
+        resultText = JSON.stringify(result);
+        if (resultText.length > 4000) resultText = resultText.slice(0, 4000) + "...[truncated]";
+        if (typeof ghLogActivity === "function") ghLogActivity(role, { action: "run_code", path: language }, "done");
+      } catch (e) {
+        resultText = JSON.stringify({ error: e.message });
+        if (typeof ghLogActivity === "function") ghLogActivity(role, { action: "run_code", path: language }, "error");
+      }
+      convo.push({ role: "assistant", content: stepText });
+      currentPrompt = `<run_code_result>${resultText}</run_code_result>`;
+      currentImages = null;
+      continue;
+    }
+
+    // ---- Ask another agent (one-shot consult, no tools/recursion) ----
+    if (parsed.type === "ask_agent") {
+      const targetRole = AGENTS[parsed.payload.role] ? parsed.payload.role : "head";
+      if (typeof ghLogActivity === "function") ghLogActivity(role, { action: "ask_agent", path: `→ ${targetRole}` }, "start");
+      let answerText;
+      try {
+        const targetAgent = AGENTS[targetRole];
+        let lastErr = null;
+        answerText = null;
+        for (const providerConfig of targetAgent.providers) {
+          const endpoint = PROVIDER_ENDPOINTS[providerConfig.provider];
+          const { ok, data } = await callAgentRaw(endpoint, providerConfig.model, targetAgent.system, parsed.payload.question, 800, null, null);
+          if (ok) { answerText = cleanThinking(data.content || ""); break; }
+          lastErr = data;
+        }
+        if (answerText === null) answerText = `[Error asking ${targetRole}: ${JSON.stringify(lastErr)}]`;
+        if (typeof ghLogActivity === "function") ghLogActivity(role, { action: "ask_agent", path: `→ ${targetRole}` }, "done");
+      } catch (e) {
+        answerText = `[Error: ${e.message}]`;
+        if (typeof ghLogActivity === "function") ghLogActivity(role, { action: "ask_agent", path: `→ ${targetRole}` }, "error");
+      }
+      convo.push({ role: "assistant", content: stepText });
+      currentPrompt = `<ask_agent_result>${JSON.stringify({ from: targetRole, answer: answerText })}</ask_agent_result>`;
+      currentImages = null;
+      continue;
+    }
+
+    // ---- Hand off remainder of the task to another agent ----
+    if (parsed.type === "handoff_to") {
+      const targetRole = AGENTS[parsed.payload.role] ? parsed.payload.role : "head";
+      if (handoffDepth >= 2) {
         convo.push({ role: "assistant", content: stepText });
-        currentPrompt = `<gh_result>{"error":"The user denied this action. Do not retry the exact same action — either try a different approach, or explain to the user in plain text what you needed and why, without asking for approval again."}</gh_result>`;
+        currentPrompt = `<handoff_to_result>{"error":"Handoff limit reached for this task. Finish it yourself now."}</handoff_to_result>`;
         currentImages = null;
         continue;
       }
+      if (typeof ghLogActivity === "function") ghLogActivity(role, { action: "handoff_to", path: `→ ${targetRole}` }, "start");
+      const handoffResult = await callAgent(targetRole, parsed.payload.task, null, null, convo, handoffDepth + 1);
+      if (typeof ghLogActivity === "function") ghLogActivity(role, { action: "handoff_to", path: `→ ${targetRole}` }, "done");
+      return `[Handed off from ${role} to ${targetRole}]\n\n${handoffResult}`;
     }
-
-    let resultText;
-    try {
-      const result = await ghCall(resolved.action, resolved);
-      resultText = JSON.stringify(result);
-      if (resultText.length > 4000) resultText = resultText.slice(0, 4000) + "...[truncated]";
-      if (typeof ghLogActivity === "function") ghLogActivity(role, resolved, "done");
-    } catch (e) {
-      resultText = JSON.stringify({ error: e.message });
-      if (typeof ghLogActivity === "function") ghLogActivity(role, resolved, "error");
-    }
-
-    convo.push({ role: "assistant", content: stepText });
-    currentPrompt = `<gh_result>${resultText}</gh_result>`;
-    currentImages = null;
   }
 
-  return "[Stopped after too many GitHub actions in a single turn — try breaking the task into smaller steps.]";
+  return "[Stopped after too many tool actions in a single turn — try breaking the task into smaller steps.]";
 }
 
 function cleanThinking(text) {
@@ -3528,6 +3669,7 @@ async function connect(uid) {
     document.getElementById("projectsBtn").style.display = "flex";
     document.getElementById("skillsBtn").style.display = "flex";
     document.getElementById("githubBtn").style.display = "flex";
+    document.getElementById("sandboxBtn").style.display = "flex";
 
     allProjects = await loadProjects(userId);
     allSkills = await loadSkills(userId);
@@ -4491,6 +4633,42 @@ function ghLogActivity(role, action, status) {
 }
 document.getElementById("ghActivityCloseBtn").onclick = () => {
   document.getElementById("ghActivityLog").style.display = "none";
+};
+
+// ---- Manual sandbox panel (human-driven code execution, same code-exec function agents use) ----
+
+document.getElementById("sandboxBtn").onclick = () => {
+  document.getElementById("sandboxPageView").style.display = "flex";
+};
+document.getElementById("sandboxBackBtn").onclick = () => {
+  document.getElementById("sandboxPageView").style.display = "none";
+};
+
+document.getElementById("sbRunBtn").onclick = async () => {
+  const language = document.getElementById("sbLanguageSelect").value;
+  const code = document.getElementById("sbCodeTextarea").value;
+  const outEl = document.getElementById("sbOutput");
+  const statusEl = document.getElementById("sbStatus");
+  if (!code.trim()) { statusEl.textContent = "Write some code first"; statusEl.className = "gh-status err"; return; }
+  statusEl.textContent = "Running…";
+  statusEl.className = "gh-status";
+  document.getElementById("sbRunBtn").disabled = true;
+  outEl.textContent = "";
+  try {
+    const result = await runCode(language, code);
+    let out = "";
+    if (result.compileStderr) out += `[compile stderr]\n${result.compileStderr}\n\n`;
+    out += result.stdout || "";
+    if (result.stderr) out += (out ? "\n" : "") + `[stderr]\n${result.stderr}`;
+    outEl.textContent = out || "(no output)";
+    statusEl.textContent = `Exit code ${result.exitCode} · ${result.language} ${result.version || ""}`;
+    statusEl.className = "gh-status " + (result.exitCode === 0 ? "ok" : "err");
+  } catch (e) {
+    outEl.textContent = "";
+    statusEl.textContent = "Error: " + e.message;
+    statusEl.className = "gh-status err";
+  }
+  document.getElementById("sbRunBtn").disabled = false;
 };
 </script>
 
