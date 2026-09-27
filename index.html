@@ -2781,7 +2781,7 @@ function closeFilePreview() {
   document.getElementById("filePreviewModal").style.display = "none";
 }
 
-function addMessage(role, content, tag = null, msgId = null) {
+function addMessage(role, content, tag = null, msgId = null, scroll = true) {
   const log = document.getElementById("log");
   const wrap = document.createElement("div");
   wrap.className = "msg " + (role === "user" ? "user" : "assistant");
@@ -2803,7 +2803,12 @@ function addMessage(role, content, tag = null, msgId = null) {
     ${actionRow}
   `;
   log.appendChild(wrap);
-  log.scrollTop = log.scrollHeight;
+  // Reading scrollHeight forces a synchronous layout reflow. That's fine for a single live
+  // message, but loading a long conversation called this once PER stored message (38 of
+  // them in one real case here, ~486KB combined) — each reflow got slower as the DOM grew,
+  // long enough on mobile hardware to look completely frozen with no error at all. Bulk
+  // loads now pass scroll=false and reflow exactly once after the whole batch is in.
+  if (scroll) log.scrollTop = log.scrollHeight;
 
   if (role === "user" && msgId) {
     wrap.querySelector(".edit-btn").onclick = () => startEdit(wrap, msgId, content);
@@ -3844,9 +3849,7 @@ async function openConversation(conv) {
   document.getElementById("log").innerHTML = "";
   messages = await loadMessages(currentBranchId);
   versionMap = await buildVersionMap(messages);
-  for (const m of messages) {
-    await renderStoredMessage(m);
-  }
+  await renderMessageBatch(messages);
   if (window.innerWidth <= 768) toggleSidebar();
 }
 
@@ -4352,11 +4355,25 @@ async function buildVersionMap(msgs) {
   return map;
 }
 
-async function renderStoredMessage(m) {
-  const wrap = addMessage(m.role, m.content, null, m.id);
+async function renderStoredMessage(m, scroll = true) {
+  const wrap = addMessage(m.role, m.content, null, m.id, scroll);
   if (m.role === "user" && m.version_group && versionMap[m.version_group] && versionMap[m.version_group].length > 1) {
     setupVersionSwitcher(wrap, m.version_group, m.id);
   }
+}
+
+// Renders a full stored conversation history in one batch. Hides the log while appending —
+// a hidden element doesn't trigger layout on every child insertion — then shows it and
+// scrolls exactly once at the end, instead of once per message (see the comment in
+// addMessage for why that mattered).
+async function renderMessageBatch(msgs) {
+  const log = document.getElementById("log");
+  log.style.display = "none";
+  for (const m of msgs) {
+    await renderStoredMessage(m, false);
+  }
+  log.style.display = "";
+  log.scrollTop = log.scrollHeight;
 }
 
 function setupVersionSwitcher(wrap, group, currentMsgId) {
@@ -4381,7 +4398,7 @@ async function switchVersion(targetBranchId) {
   document.getElementById("log").innerHTML = "";
   messages = await loadMessages(targetBranchId);
   versionMap = await buildVersionMap(messages);
-  for (const m of messages) await renderStoredMessage(m);
+  await renderMessageBatch(messages);
 }
 
 async function submitEdit(wrap, msgId, newContent) {
@@ -4408,7 +4425,7 @@ async function submitEdit(wrap, msgId, newContent) {
   document.getElementById("log").innerHTML = "";
   messages = await loadMessages(newBranchId);
   versionMap = await buildVersionMap(messages);
-  for (const mm of messages) await renderStoredMessage(mm);
+  await renderMessageBatch(messages);
 
   await runAndSaveResponse(newContent);
 }
