@@ -71,7 +71,10 @@
     display: flex;
     flex-direction: column;
     padding: 20px 16px;
-    transition: all 0.25s ease;
+    /* Was `transition: all` — that animates every property (including layout-triggering
+       ones) on every state change, which janks on mobile. Only the properties that
+       actually change during open/close are listed now. */
+    transition: transform 0.25s ease, width 0.25s ease, min-width 0.25s ease, padding 0.25s ease;
     overflow: hidden;
   }
 
@@ -92,6 +95,7 @@
       height: 100vh; height: 100dvh; height: calc(var(--vh, 1vh) * 100);
       z-index: 100;
       box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+      will-change: transform;
     }
     .sidebar.collapsed {
       transform: translateX(-100%);
@@ -840,6 +844,8 @@
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
+    overscroll-behavior: contain; /* stops scroll chaining/rubber-banding into the page */
+    -webkit-overflow-scrolling: touch;
     padding: 24px;
     display: flex;
     flex-direction: column;
@@ -1127,7 +1133,7 @@
     border: 1px solid var(--border);
     border-radius: 3px;
     background: var(--bg);
-    transition: all 0.3s;
+    transition: border-color 0.3s, color 0.3s;
   }
 
   .pipeline-node.done {
@@ -1971,7 +1977,7 @@ if (window.innerWidth <= 768) {
 
 // ---------------- Bind buttons FIRST, before anything risky ----------------
 document.getElementById("gateBtn").onclick = () => connect(document.getElementById("gateInput").value);
-document.getElementById("gateInput").addEventListener("keydown", e => { if (e.key === "Enter") connect(e.target.value); });
+document.getElementById("gateInput").addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) connect(e.target.value); });
 
 // ---------------- Defensive error handling ----------------
 function showError(msg) {
@@ -2097,7 +2103,6 @@ const AGENTS = {
   },
 };
 
-const AGENT_LABELS = ["head","code","debug","reasoning","writing","design","search","review"];
 
 let userId = "";
 let currentConvId = null;
@@ -2305,13 +2310,71 @@ async function callAgentRaw(endpoint, model, system, prompt, maxTokens, images, 
   };
   if (images && images.length) body.images = images;
   if (history && history.length) body.history = history;
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  const data = await res.json();
-  return { ok: res.ok, data };
+
+  // This used to just `await fetch(...)` then `await res.json()`. A network failure, or a
+  // provider/gateway answering with a non-JSON error page, THREW — and that exception
+  // escaped the provider-fallback loop in callAgent, skipping every remaining provider.
+  // The whole point of the fallback chain was defeated by exactly the failures it exists
+  // for. It also had no timeout, so one hung provider blocked the entire request forever.
+  // Now every failure mode comes back as a normal { ok: false } so the loop just moves on.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60000);
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    let data;
+    try { data = await res.json(); }
+    catch { data = { error: `Non-JSON response from provider (HTTP ${res.status})` }; }
+    return { ok: res.ok, status: res.status, data };
+  } catch (e) {
+    const timedOut = e && e.name === "AbortError";
+    return { ok: false, status: 0, data: { error: timedOut ? "Provider timed out after 60s" : "Network error: " + (e && e.message ? e.message : e) } };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ---- Circuit breaker for providers ----
+// With several fallback models per agent, a dead/rate-limited one used to be retried (and
+// waited on) at the start of EVERY call. Now a provider that just failed is skipped for a
+// while: 404 = model removed (long pause), 401/403 = bad key (medium), 429 = rate limited
+// (short), anything else = transient blip (very short). If every provider is cooling down
+// we ignore the cooldowns and try them all, so a bad streak can never lock the app out.
+const providerCooldown = {};
+function providerKey(p) { return p.provider + ":" + p.model; }
+function noteProviderFailure(p, status) {
+  const ms = status === 404 ? 30 * 60000
+    : (status === 401 || status === 403) ? 10 * 60000
+    : status === 429 ? 60000
+    : 20000;
+  providerCooldown[providerKey(p)] = Date.now() + ms;
+}
+function noteProviderSuccess(p) { delete providerCooldown[providerKey(p)]; }
+function availableProviders(agent) {
+  const now = Date.now();
+  const ready = agent.providers.filter(p => !(providerCooldown[providerKey(p)] > now));
+  return ready.length ? ready : agent.providers;
+}
+
+// One pass over an agent's providers, in order, until one answers. Shared by the main
+// agent loop and by ask_agent so both get the same timeout/cooldown behaviour.
+async function callProviders(agent, system, prompt, maxTokens, images, history) {
+  let lastError = null;
+  for (const providerConfig of availableProviders(agent)) {
+    const endpoint = PROVIDER_ENDPOINTS[providerConfig.provider];
+    const r = await callAgentRaw(endpoint, providerConfig.model, system, prompt, maxTokens, images, history);
+    if (r.ok) {
+      noteProviderSuccess(providerConfig);
+      return { text: cleanThinking(r.data.content || ""), error: null };
+    }
+    noteProviderFailure(providerConfig, r.status);
+    lastError = { provider: providerConfig.provider, error: r.data };
+  }
+  return { text: null, error: lastError };
 }
 
 async function callAgent(role, prompt, maxTokens = null, images = null, history = null, handoffDepth = 0) {
@@ -2331,17 +2394,11 @@ async function callAgent(role, prompt, maxTokens = null, images = null, history 
   let currentImages = images;
 
   for (let step = 0; step < GH_MAX_STEPS; step++) {
-    let stepText = null;
-    let lastError = null;
-    for (const providerConfig of agent.providers) {
-      const endpoint = PROVIDER_ENDPOINTS[providerConfig.provider];
-      const { ok, data } = await callAgentRaw(endpoint, providerConfig.model, systemWithTools, currentPrompt, maxTokens, currentImages, convo);
-      if (ok) { stepText = cleanThinking(data.content || ""); break; }
-      lastError = { provider: providerConfig.provider, error: data };
-      // any failure (rate limit, quota, model error, etc.) — fall through to the next provider immediately
-    }
+    const attempt = await callProviders(agent, systemWithTools, currentPrompt, maxTokens, currentImages, convo);
+    const stepText = attempt.text;
     if (stepText === null) {
-      return `[Error] All providers failed for this task. Last error (${lastError.provider}): ${JSON.stringify(lastError.error)}`;
+      const le = attempt.error;
+      return `[Error] All providers failed for this task. Last error (${le.provider}): ${JSON.stringify(le.error)}`;
     }
 
     const parsed = parseAgentAction(stepText);
@@ -2409,16 +2466,10 @@ async function callAgent(role, prompt, maxTokens = null, images = null, history 
       let answerText;
       try {
         const targetAgent = AGENTS[targetRole];
-        let lastErr = null;
-        answerText = null;
-        for (const providerConfig of targetAgent.providers) {
-          const endpoint = PROVIDER_ENDPOINTS[providerConfig.provider];
-          const { ok, data } = await callAgentRaw(endpoint, providerConfig.model, targetAgent.system, parsed.payload.question, 800, null, null);
-          if (ok) { answerText = cleanThinking(data.content || ""); break; }
-          lastErr = data;
-        }
-        if (answerText === null) answerText = `[Error asking ${targetRole}: ${JSON.stringify(lastErr)}]`;
-        if (typeof ghLogActivity === "function") ghLogActivity(role, { action: "ask_agent", path: `→ ${targetRole}` }, "done");
+        const consult = await callProviders(targetAgent, targetAgent.system, parsed.payload.question, 800, null, null);
+        const failed = consult.text === null;
+        answerText = failed ? `[Error asking ${targetRole}: ${JSON.stringify(consult.error && consult.error.error)}]` : consult.text;
+        if (typeof ghLogActivity === "function") ghLogActivity(role, { action: "ask_agent", path: `→ ${targetRole}` }, failed ? "error" : "done");
       } catch (e) {
         answerText = `[Error: ${e.message}]`;
         if (typeof ghLogActivity === "function") ghLogActivity(role, { action: "ask_agent", path: `→ ${targetRole}` }, "error");
@@ -2830,11 +2881,34 @@ function addMessage(role, content, tag = null, msgId = null, scroll = true) {
     wrap.querySelector(".edit-btn").onclick = () => startEdit(wrap, msgId, content);
   }
   if (role === "assistant") {
-    wrap.querySelector(".copy-btn").onclick = () => copyMessage(wrap);
-    wrap.querySelector(".regen-btn").onclick = () => regenerateMessage(wrap, msgId);
-    wrap.querySelector(".reply-btn").onclick = () => setReplyContext(wrap.querySelector(".bubble").innerText);
+    bindAssistantActions(wrap, msgId);
   }
   return wrap;
+}
+
+// A live assistant reply is shown immediately (via addMessage) before it has a real
+// database id — msgId is null at that point. Its action buttons were being bound to that
+// null id forever, since nothing ever rebound them once saveMessage() returned the real
+// one. That meant regenerating a reply right after it arrived (before switching or
+// reloading the conversation) updated the text on screen but the database update ran as
+// `.eq("id", null)`, matching zero rows — the "regenerated" text was never actually saved.
+// bindMessageId (called from runAndSaveResponse once the real id is known) fixes that by
+// rebinding these same handlers with the id they should have had from the start.
+function bindAssistantActions(wrap, msgId) {
+  wrap.querySelector(".copy-btn").onclick = () => copyMessage(wrap);
+  wrap.querySelector(".regen-btn").onclick = () => regenerateMessage(wrap, msgId);
+  wrap.querySelector(".reply-btn").onclick = () => setReplyContext(wrap.querySelector(".bubble").innerText);
+}
+
+function bindMessageId(wrap, msgId) {
+  if (!msgId) return;
+  wrap.dataset.msgId = msgId;
+  if (wrap.classList.contains("assistant")) {
+    bindAssistantActions(wrap, msgId);
+  } else {
+    const editBtn = wrap.querySelector(".edit-btn");
+    if (editBtn) editBtn.onclick = () => startEdit(wrap, msgId, wrap.querySelector(".bubble").innerText);
+  }
 }
 
 function copyMessage(wrap) {
@@ -2879,7 +2953,14 @@ async function regenerateMessage(wrap, msgId) {
       output = res.result; role = res.role;
     }
     bubble.innerHTML = formatContent(output);
-    await saveMessage(userId, currentConvId, currentBranchId, "assistant", output);
+    // Regenerating replaces this response — it must UPDATE the existing row, not insert a
+    // new one. Previously this called saveMessage (an insert), which left the original
+    // response sitting in the database untouched: reloading the conversation would show
+    // BOTH the old and the "regenerated" response as two separate sequential messages.
+    const { error } = await sb.from("chat_history").update({ content: output }).eq("id", msgId);
+    if (error) throw new Error("Failed to save regenerated message: " + error.message);
+    const mIdx = messages.findIndex(m => m.id === msgId);
+    if (mIdx !== -1) messages[mIdx].content = output;
   } catch (err) {
     bubble.innerHTML = "[Error] " + escapeHtml(String(err));
   }
@@ -3479,9 +3560,16 @@ document.getElementById("skillUploadInput").addEventListener("change", async (e)
 });
 
 async function createConversation(uid, title = "New chat") {
-  const { data: conv } = await sb.from("conversations").insert({ user_id: uid, title }).select().single();
-  const { data: branch } = await sb.from("branches").insert({ conversation_id: conv.id, parent_branch_id: null }).select().single();
-  await sb.from("conversations").update({ active_branch_id: branch.id }).eq("id", conv.id);
+  // This is called from many places (new chat, first-run boot, project quick-create,
+  // recovering after a delete) — some callers catch errors, some didn't. Hardening it here
+  // once means every caller is protected, instead of a failed insert leaving `conv`
+  // undefined and crashing the very next line with a confusing property-access error.
+  const { data: conv, error: convErr } = await sb.from("conversations").insert({ user_id: uid, title }).select().single();
+  if (convErr) throw new Error("Failed to create conversation: " + convErr.message);
+  const { data: branch, error: branchErr } = await sb.from("branches").insert({ conversation_id: conv.id, parent_branch_id: null }).select().single();
+  if (branchErr) throw new Error("Failed to create branch: " + branchErr.message);
+  const { error: updateErr } = await sb.from("conversations").update({ active_branch_id: branch.id }).eq("id", conv.id);
+  if (updateErr) throw new Error("Failed to link branch to conversation: " + updateErr.message);
   conv.active_branch_id = branch.id;
   return conv;
 }
@@ -3511,22 +3599,32 @@ async function saveMessage(uid, convId, branchId, role, content) {
 
 // Create a new branch by copying everything before `beforeMessageId` from sourceBranchId
 async function forkBranch(convId, sourceBranchId, beforeMessageId) {
-  const { data: newBranch } = await sb.from("branches").insert({ conversation_id: convId, parent_branch_id: sourceBranchId }).select().single();
+  // None of these three calls checked `error` before — a failed insert left `newBranch`
+  // undefined, and `newBranch.id` a few lines down crashed with the exact same confusing
+  // "Cannot read properties of undefined" error as the earlier saveMessage bug. The caller
+  // (submitEdit) now catches this, but the message it shows should actually explain what
+  // broke instead of a raw property-access crash.
+  const { data: newBranch, error: branchErr } = await sb.from("branches").insert({ conversation_id: convId, parent_branch_id: sourceBranchId }).select().single();
+  if (branchErr) throw new Error("Failed to create branch: " + branchErr.message);
 
-  const { data: priorMessages } = await sb.from("chat_history")
+  const { data: priorMessages, error: fetchErr } = await sb.from("chat_history")
     .select("*")
     .eq("branch_id", sourceBranchId)
     .lt("id", beforeMessageId)
     .order("id");
+  if (fetchErr) throw new Error("Failed to read prior messages for fork: " + fetchErr.message);
 
   if (priorMessages && priorMessages.length) {
     const copies = priorMessages.map(m => ({
       user_id: m.user_id, conversation_id: convId, branch_id: newBranch.id, role: m.role, content: m.content
     }));
-    await sb.from("chat_history").insert(copies);
+    const { error: copyErr } = await sb.from("chat_history").insert(copies);
+    if (copyErr) throw new Error("Failed to copy messages into new branch: " + copyErr.message);
   }
 
-  await sb.from("conversations").update({ active_branch_id: newBranch.id }).eq("id", convId);
+  const { error: updateErr } = await sb.from("conversations").update({ active_branch_id: newBranch.id }).eq("id", convId);
+  if (updateErr) throw new Error("Failed to point conversation at new branch: " + updateErr.message);
+
   return newBranch.id;
 }
 
@@ -3795,7 +3893,7 @@ function startRenameConversation(conv, anchorEl) {
   };
 
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") input.blur();
+    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) input.blur();
     if (e.key === "Escape") { renderConvList(allConvs, currentConvId); }
   });
   input.addEventListener("blur", commit);
@@ -3845,28 +3943,40 @@ async function openConversation(conv) {
   currentConvId = conv.id;
   currentBranchId = conv.active_branch_id;
 
-  // Backward compatibility: conversations created before branching existed
-  if (!currentBranchId) {
-    const { data: branch } = await sb.from("branches").insert({ conversation_id: conv.id, parent_branch_id: null }).select().single();
-    currentBranchId = branch.id;
-    await sb.from("conversations").update({ active_branch_id: currentBranchId }).eq("id", conv.id);
-    conv.active_branch_id = currentBranchId;
-  }
+  // This is the single place every "switch conversation" path funnels through (initial
+  // boot, clicking a conversation in the sidebar, clicking one in the full Chats page).
+  // It used to have no error handling at all: if anything below threw — a network blip,
+  // a bad row — the log was already cleared and nothing ever replaced it, silently. Two
+  // of the three call sites weren't awaited or wrapped by their caller either, so that
+  // failure was completely invisible. Wrapping it here fixes it for every caller at once.
+  try {
+    // Backward compatibility: conversations created before branching existed
+    if (!currentBranchId) {
+      const { data: branch, error: branchErr } = await sb.from("branches").insert({ conversation_id: conv.id, parent_branch_id: null }).select().single();
+      if (branchErr) throw new Error("Failed to create branch: " + branchErr.message);
+      currentBranchId = branch.id;
+      await sb.from("conversations").update({ active_branch_id: currentBranchId }).eq("id", conv.id);
+      conv.active_branch_id = currentBranchId;
+    }
 
-  // Set project instructions context for this conversation, if it belongs to a project
-  if (conv.project_id) {
-    const proj = allProjects.find(p => p.id === conv.project_id);
-    currentProjectInstructions = proj ? proj.instructions : null;
-  } else {
-    currentProjectInstructions = null;
-  }
+    // Set project instructions context for this conversation, if it belongs to a project
+    if (conv.project_id) {
+      const proj = allProjects.find(p => p.id === conv.project_id);
+      currentProjectInstructions = proj ? proj.instructions : null;
+    } else {
+      currentProjectInstructions = null;
+    }
 
-  renderConvList(allConvs, currentConvId);
-  document.getElementById("log").innerHTML = "";
-  messages = await loadMessages(currentBranchId);
-  versionMap = await buildVersionMap(messages);
-  await renderMessageBatch(messages);
-  if (window.innerWidth <= 768) toggleSidebar();
+    renderConvList(allConvs, currentConvId);
+    document.getElementById("log").innerHTML = "";
+    messages = await loadMessages(currentBranchId);
+    versionMap = await buildVersionMap(messages);
+    await renderMessageBatch(messages);
+    if (window.innerWidth <= 768) toggleSidebar();
+  } catch (e) {
+    showError("Couldn't open this conversation: " + e.message);
+    document.getElementById("log").innerHTML = `<div class="msg assistant"><div class="bubble">Something went wrong loading this conversation. Try selecting it again.</div></div>`;
+  }
 }
 
 async function startNewChat() {
@@ -4162,7 +4272,27 @@ document.getElementById("fileInput").addEventListener("change", (e) => {
   e.target.value = ""; // allow re-selecting the same file later
 });
 
+// Re-entry guard. The send button gets disabled, but the Enter key path didn't check that,
+// so typing a new message and pressing Enter while the previous one was still being
+// answered started a second concurrent send — both then raced on shared state
+// (currentSkillInstructions, the message list) and the first one's cleanup re-enabled the
+// send button while the second was still running. Now a second call is simply ignored
+// (the typed text is left in the box, not lost) until the first finishes.
+let isSending = false;
 async function sendTask() {
+  if (isSending) return;
+  isSending = true;
+  try {
+    await sendTaskInner();
+  } catch (e) {
+    showError("Message failed to send: " + e.message);
+  } finally {
+    isSending = false;
+    document.getElementById("sendBtn").disabled = false;
+  }
+}
+
+async function sendTaskInner() {
   const input = document.getElementById("taskInput");
   let typed = input.value.trim();
   if ((!typed && !attachedFiles.length) || !userId || !currentConvId) return;
@@ -4350,6 +4480,7 @@ async function runAndSaveResponse(task, visionData = null) {
     document.getElementById("log").scrollTop = document.getElementById("log").scrollHeight;
 
     const savedMsg = await saveMessage(userId, currentConvId, currentBranchId, "assistant", output);
+    bindMessageId(thinkingWrap, savedMsg.id);
     messages.push(savedMsg);
   } catch (err) {
     bubble.innerHTML = "[Error] " + escapeHtml(String(err));
@@ -4384,6 +4515,12 @@ async function renderStoredMessage(m, scroll = true) {
 // addMessage for why that mattered).
 async function renderMessageBatch(msgs) {
   const log = document.getElementById("log");
+  // Every render of an attached file registers its full content in window.__fileBlocks so
+  // the preview chip can open it. Nothing ever removed those entries, so switching between
+  // conversations with big attachments (a 218k-char file, say) leaked that content again on
+  // every switch. Every caller clears the log right before this, so the old chips are gone
+  // and their registry entries are safe to drop.
+  window.__fileBlocks = {};
   log.style.display = "none";
   for (const m of msgs) {
     await renderStoredMessage(m, false);
@@ -4407,47 +4544,66 @@ function setupVersionSwitcher(wrap, group, currentMsgId) {
 }
 
 async function switchVersion(targetBranchId) {
-  await sb.from("conversations").update({ active_branch_id: targetBranchId }).eq("id", currentConvId);
-  const conv = allConvs.find(c => c.id === currentConvId);
-  if (conv) conv.active_branch_id = targetBranchId;
-  currentBranchId = targetBranchId;
-  document.getElementById("log").innerHTML = "";
-  messages = await loadMessages(targetBranchId);
-  versionMap = await buildVersionMap(messages);
-  await renderMessageBatch(messages);
+  // Same risk as openConversation: this clears and rebuilds the whole log, and was
+  // completely unguarded — a failure here (a bad row, a network blip) left the log blank
+  // with no error and no way back short of a reload.
+  try {
+    const { error } = await sb.from("conversations").update({ active_branch_id: targetBranchId }).eq("id", currentConvId);
+    if (error) throw new Error(error.message);
+    const conv = allConvs.find(c => c.id === currentConvId);
+    if (conv) conv.active_branch_id = targetBranchId;
+    currentBranchId = targetBranchId;
+    document.getElementById("log").innerHTML = "";
+    messages = await loadMessages(targetBranchId);
+    versionMap = await buildVersionMap(messages);
+    await renderMessageBatch(messages);
+  } catch (e) {
+    showError("Couldn't switch versions: " + e.message);
+  }
 }
 
 async function submitEdit(wrap, msgId, newContent) {
   if (!newContent) return;
 
-  let m = messages.find(x => x.id === msgId);
-  let group = m ? m.version_group : null;
-  if (!group) {
-    group = msgId;
-    await sb.from("chat_history").update({ version_group: group }).eq("id", msgId);
+  try {
+    let m = messages.find(x => x.id === msgId);
+    let group = m ? m.version_group : null;
+    if (!group) {
+      group = msgId;
+      const { error } = await sb.from("chat_history").update({ version_group: group }).eq("id", msgId);
+      if (error) throw new Error("Failed to tag version group: " + error.message);
+    }
+
+    const newBranchId = await forkBranch(currentConvId, currentBranchId, msgId);
+
+    const { error: insertErr } = await sb.from("chat_history").insert({
+      user_id: userId, conversation_id: currentConvId, branch_id: newBranchId,
+      role: "user", content: newContent, version_group: group
+    }).select().single();
+    if (insertErr) throw new Error("Failed to save edited message: " + insertErr.message);
+
+    currentBranchId = newBranchId;
+    const conv = allConvs.find(c => c.id === currentConvId);
+    if (conv) conv.active_branch_id = newBranchId;
+
+    document.getElementById("log").innerHTML = "";
+    messages = await loadMessages(newBranchId);
+    versionMap = await buildVersionMap(messages);
+    await renderMessageBatch(messages);
+
+    await runAndSaveResponse(newContent);
+  } catch (e) {
+    showError("Couldn't save your edit: " + e.message);
   }
-
-  const newBranchId = await forkBranch(currentConvId, currentBranchId, msgId);
-
-  const { data: newMsg } = await sb.from("chat_history").insert({
-    user_id: userId, conversation_id: currentConvId, branch_id: newBranchId,
-    role: "user", content: newContent, version_group: group
-  }).select().single();
-
-  currentBranchId = newBranchId;
-  const conv = allConvs.find(c => c.id === currentConvId);
-  if (conv) conv.active_branch_id = newBranchId;
-
-  document.getElementById("log").innerHTML = "";
-  messages = await loadMessages(newBranchId);
-  versionMap = await buildVersionMap(messages);
-  await renderMessageBatch(messages);
-
-  await runAndSaveResponse(newContent);
 }
 
 document.getElementById("sendBtn").onclick = sendTask;
-document.getElementById("taskInput").addEventListener("keydown", e => { if (e.key === "Enter") sendTask(); });
+// e.isComposing / keyCode 229 = the Enter key is confirming an IME candidate (Chinese,
+// Japanese, Korean input), not submitting. Without this check, confirming a word sent the
+// half-typed message.
+document.getElementById("taskInput").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) sendTask();
+});
 
 // ==================== GitHub integration ====================
 
