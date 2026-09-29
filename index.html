@@ -2154,37 +2154,97 @@ const AGENT_ROLE_LIST = ["head", "code", "debug", "reasoning", "writing", "desig
 
 const AGENT_TOOL_SYSTEM = `
 
-You also have tools available when the task calls for them. To use one, reply with ONLY the tag below, nothing else in that turn. You'll get the result back as <gh_result>...</gh_result> (or the matching *_result tag), then decide the next step. Take exactly ONE action per turn. Once you have everything you need, give your final answer as plain text with NO tag.
+You also have tools available when the task calls for them. To use one, reply with ONLY the tag below, nothing else in that turn. Short values (repo names, paths, a role) go in attributes; any free-form text — code, a file's contents, a task description — goes as the RAW body between the opening and closing tag, written completely normally with no escaping, no quoting, no backslashes added. You'll get the result back as <gh_result>...</gh_result> (or the matching *_result tag), then decide the next step. Take exactly ONE action per turn. Once you have everything you need, give your final answer as plain text with NO tag.
 
-1) GitHub — read/write a repo:
-<gh_action>{"action":"ACTION_NAME", ...params}</gh_action>
-  - list_repos {} — repos the user's token can access
-  - get_repo {"owner","repo"}
-  - get_branches {"owner","repo"}
-  - get_contents {"owner","repo","path","branch"} — path "" = root; returns a directory listing, or a file's content
-  - put_file {"owner","repo","path","content","message","branch","sha"} — create/update a file (sha only when overwriting an existing file). WRITE — needs the user's approval.
-  - delete_file {"owner","repo","path","sha","message","branch"} — WRITE — needs approval.
-  - create_branch {"owner","repo","branch","base"} — WRITE — needs approval.
-  - create_pr {"owner","repo","title","head","base","prBody"} — WRITE — needs approval.
+1) GitHub — read/write a repo. Attributes: action (required — one of the names below), owner, repo, path, branch, base, sha, message, title, head. For put_file the body is the file's full content; for create_pr the body is the PR description; every other action has an empty body.
+<gh_action action="ACTION_NAME" owner="..." repo="..." path="..." branch="..." message="..."></gh_action>
+  - list_repos — repos the user's token can access
+  - get_repo (owner, repo)
+  - get_branches (owner, repo)
+  - get_contents (owner, repo, path, branch) — path "" = root; returns a directory listing, or a file's content
+  - put_file (owner, repo, path, message, branch, sha — sha only when overwriting an existing file; body = new file content) — WRITE, needs the user's approval
+  - delete_file (owner, repo, path, sha, message, branch) — WRITE, needs approval
+  - create_branch (owner, repo, branch, base) — WRITE, needs approval
+  - create_pr (owner, repo, title, head, base; body = PR description) — WRITE, needs approval
   If the user didn't name a repo, omit owner/repo — they default to whatever is currently open in the GitHub panel.
 
-2) Run code — execute code in a sandbox and see real stdout/stderr (use this to verify code actually works before handing it to the user):
-<run_code>{"language":"python|javascript|bash|...", "code":"...", "stdin":"(optional)"}</run_code>
+2) Run code — execute code in a sandbox and see real stdout/stderr (use this to verify code actually works before handing it to the user). Attribute: language. Body: the code, written exactly as it should run — real line breaks, real quotes, nothing escaped.
+<run_code language="python">
+def example():
+    return "this is exactly how the code should look — no escaping"
+</run_code>
 
-3) Ask another agent — get a quick answer from a specialist without taking over the task yourself (available agents: ${AGENT_ROLE_LIST.join(", ")}):
-<ask_agent>{"role":"ROLE", "question":"..."}</ask_agent>
+3) Ask another agent — get a quick answer from a specialist without taking over the task yourself (available agents: ${AGENT_ROLE_LIST.join(", ")}). Attribute: role. Body: the question.
+<ask_agent role="ROLE">your question, written normally</ask_agent>
 
-4) Hand off — you're done with your part; transfer the rest of the task to another agent to finish (available agents: ${AGENT_ROLE_LIST.join(", ")}):
-<handoff_to>{"role":"ROLE", "task":"what they should do, with any context they need"}</handoff_to>
+4) Hand off — you're done with your part; transfer the rest of the task to another agent to finish (available agents: ${AGENT_ROLE_LIST.join(", ")}). Attribute: role. Body: what they should do, with any context they need — including code blocks if useful, written normally.
+<handoff_to role="ROLE">
+what they should do, with any context they need
+</handoff_to>
 
 A file attached earlier in this conversation is NOT resent to you in full on later turns (to save tokens) — you'll just see a note that one was attached. If you need its current content again, use get_contents to fetch it fresh rather than assuming or reconstructing it from memory.
 `;
 
-// Models very often emit multi-line code as a JSON string value with REAL line breaks
-// instead of escaping them as \n — which is invalid JSON and made JSON.parse throw, which
-// silently dropped the whole tool call and dumped the raw tags to the user as broken text.
-// This repairs that (and stray \r, \t) by walking the string and escaping control
-// characters ONLY while inside a quoted JSON string, leaving actual JSON structure alone.
+const AGENT_TOOL_TAGS = [
+  ["gh_action", "gh"],
+  ["run_code", "run_code"],
+  ["ask_agent", "ask_agent"],
+  ["handoff_to", "handoff_to"],
+];
+
+function validAgentPayload(type, obj) {
+  if (!obj) return false;
+  if (type === "gh" && typeof obj.action !== "string") return false;
+  if (type === "run_code" && (!obj.language || !obj.code)) return false;
+  if (type === "ask_agent" && (!obj.role || !obj.question)) return false;
+  if (type === "handoff_to" && (!obj.role || !obj.task)) return false;
+  return true;
+}
+
+// Asking a model to JSON-encode arbitrary code inside a tag (`<run_code>{"code":"..."}`)
+// turned out to be fundamentally fragile: first models left raw newlines inside the JSON
+// string (invalid JSON), then — after that was patched — a model correctly escaped MOST
+// embedded quotes in a Python f-string but missed one, which still produces invalid JSON no
+// repair pass can safely recover (an unescaped quote is genuinely ambiguous: is it the end
+// of the string, or a mistake?). Rather than keep patching new JSON-escaping failure modes
+// as they surface, the primary format asks for short/simple values as plain attributes and
+// any free-form content (code, file contents, a task) as the tag's RAW BODY TEXT — nothing
+// needs escaping at all, because it's never wrapped in a JSON string in the first place.
+function parseAttrTag(text) {
+  for (const [tag, type] of AGENT_TOOL_TAGS) {
+    const m = text.match(new RegExp(`<${tag}([^>]*)>([\\s\\S]*?)</${tag}>`));
+    if (!m) continue;
+    const attrs = {};
+    const attrRe = /([\w-]+)\s*=\s*"([^"]*)"/g;
+    let am;
+    while ((am = attrRe.exec(m[1]))) attrs[am[1]] = am[2];
+    const body = m[2].trim().replace(/^```[\w-]*\n?/, "").replace(/```$/, "").trim();
+
+    let payload;
+    if (type === "gh") {
+      const isPut = attrs.action === "put_file";
+      const isPr = attrs.action === "create_pr";
+      payload = { ...attrs };
+      if (isPut && body) payload.content = body;
+      if (isPr && body) payload.prBody = body;
+    } else if (type === "run_code") {
+      payload = { language: attrs.language, code: body, stdin: attrs.stdin };
+    } else if (type === "ask_agent") {
+      payload = { role: attrs.role, question: body };
+    } else {
+      payload = { role: attrs.role, task: body };
+    }
+    if (!validAgentPayload(type, payload)) continue;
+    return { type, payload };
+  }
+  return null;
+}
+
+// Fallback for models that ignore the attribute+body format above and emit JSON in the tag
+// anyway (`<run_code>{"language":"python","code":"..."}</run_code>`) — kept for models that
+// happen to produce clean JSON with no embedded quotes/newlines to worry about. Still
+// repairs raw newlines left un-escaped inside a JSON string, a separate, more mechanical
+// issue than the ambiguous-unescaped-quote one above.
 function lenientJsonParse(raw) {
   try { return JSON.parse(raw); } catch {}
   let repaired = "";
@@ -2203,29 +2263,25 @@ function lenientJsonParse(raw) {
   try { return JSON.parse(repaired); } catch { return null; }
 }
 
-const AGENT_TOOL_TAGS = [
-  ["gh_action", "gh"],
-  ["run_code", "run_code"],
-  ["ask_agent", "ask_agent"],
-  ["handoff_to", "handoff_to"],
-];
-
-function validAgentPayload(type, obj) {
-  if (!obj) return false;
-  if (type === "gh" && typeof obj.action !== "string") return false;
-  if (type === "run_code" && (!obj.language || !obj.code)) return false;
-  if (type === "ask_agent" && (!obj.role || !obj.question)) return false;
-  if (type === "handoff_to" && (!obj.role || !obj.task)) return false;
-  return true;
+function parseJsonTag(text) {
+  for (const [tag, type] of AGENT_TOOL_TAGS) {
+    const m = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+    if (!m) continue;
+    let raw = m[1].trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
+    const obj = lenientJsonParse(raw);
+    if (!validAgentPayload(type, obj)) continue;
+    return { type, payload: obj };
+  }
+  return null;
 }
 
 // Fallback for models with their own baked-in tool-calling training that ignore our
-// instructed JSON-tag format entirely and emit their native syntax instead — seen so far
-// as e.g. <ask_agent<arg_key>role</arg_key><arg_value>reasoning</arg_value>...</tool_call>
-// (a Hermes/XML-style tool-call convention some open models default to regardless of what
-// the system prompt asks for). Rather than chase every vendor's exact dialect, this just
-// looks for one of our tool names followed by <arg_key>/<arg_value> pairs ANYWHERE in the
-// text, and rebuilds the same payload shape our normal parser expects.
+// instructed format entirely and emit their native syntax instead — seen so far as e.g.
+// <ask_agent<arg_key>role</arg_key><arg_value>reasoning</arg_value>...</tool_call> (a
+// Hermes/XML-style tool-call convention some open models default to regardless of what the
+// system prompt asks for). Rather than chase every vendor's exact dialect, this just looks
+// for one of our tool names followed by <arg_key>/<arg_value> pairs ANYWHERE in the text,
+// and rebuilds the same payload shape our normal parser expects.
 function tryArgKeyValueFormat(text) {
   const nameMatch = text.match(/<(gh_action|run_code|ask_agent|handoff_to)\b/);
   if (!nameMatch) return null;
@@ -2244,15 +2300,7 @@ function tryArgKeyValueFormat(text) {
 }
 
 function parseAgentAction(text) {
-  for (const [tag, type] of AGENT_TOOL_TAGS) {
-    const m = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
-    if (!m) continue;
-    let raw = m[1].trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
-    const obj = lenientJsonParse(raw);
-    if (!validAgentPayload(type, obj)) continue;
-    return { type, payload: obj };
-  }
-  return tryArgKeyValueFormat(text);
+  return parseAttrTag(text) || parseJsonTag(text) || tryArgKeyValueFormat(text);
 }
 
 // Last-resort cosmetic cleanup: some models leak their own native function-calling wrapper
